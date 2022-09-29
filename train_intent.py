@@ -6,7 +6,6 @@ import pickle
 from argparse import ArgumentParser, Namespace
 from pathlib import Path
 from typing import Dict
-import ast
 import numpy as np
 from termcolor import colored
 import logging
