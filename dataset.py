@@ -1,6 +1,7 @@
 from typing import List, Dict
 
 from torch.utils.data import Dataset
+import torch
 
 from utils import Vocab
 
@@ -32,21 +33,19 @@ class SeqClsDataset(Dataset):
 
     def collate_fn(self, samples: List[Dict]) -> Dict:
         # TODO: implement collate_fn
-        batch_tokens  = []       #  List[List[maxlen_tokens2id]]  maybe has padding insisde
-        batch_labels = []       # List[int] store intents category id 
-        batch_ids = []           # List[str] store sample['id'] number of text
+        batch_tokens:List[List[int]] = []  
+        # intents category id     
+        batch_labels: List[int] = [] 
+        # sample['id'] number of text
+        batch_ids: List[str] = []           
         for sample in samples:
             batch_tokens.append(sample['text'].split())
             batch_labels.append(self.label2idx(sample['intent']))
             batch_ids.append(sample['id'])
         padded_tokens = self.vocab.encode_batch(batch_tokens,self.max_len)
-        batch_data = torch.LongTensor(batch_tokens)
+        batch_data = torch.LongTensor(padded_tokens)
         batch_labels = torch.LongTensor(batch_labels)
-        return {
-            'data': batch_data,
-            'label' : batch_labels,
-            'id' : batch_ids
-        }
+        return dict(data=batch_data, label=batch_labels, ids=batch_ids)
 
     def label2idx(self, label: str):
         return self.label_mapping[label]

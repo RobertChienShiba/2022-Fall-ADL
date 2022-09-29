@@ -19,6 +19,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
+logger = logging.getLogger(__name__)
 
 def build_vocab(
     words: Counter, vocab_size: int, output_dir: Path, glove_path: Path
@@ -28,10 +29,10 @@ def build_vocab(
     vocab_path = output_dir / "vocab.pkl"
     with open(vocab_path, "wb") as f:
         pickle.dump(vocab, f)
-    logging.info(f"Vocab saved at {str(vocab_path.resolve())}")
+    logger.info(f"Vocab saved at {str(vocab_path.resolve())}")
 
     glove: Dict[str, List[float]] = {}
-    logging.info(f"Loading glove: {str(glove_path.resolve())}")
+    logger.info(f"Loading glove: {str(glove_path.resolve())}")
     with open(glove_path) as fp:
         row1 = fp.readline()
         # if the first row is not header
@@ -55,7 +56,7 @@ def build_vocab(
     assert len(glove) <= vocab_size
 
     num_matched = sum([token in glove for token in vocab.tokens])
-    logging.info(
+    logger.info(
         f"Token covered: {num_matched} / {len(vocab.tokens)} = {num_matched / len(vocab.tokens)}"
     )
     embeddings: List[List[float]] = [
@@ -65,8 +66,8 @@ def build_vocab(
     embeddings = torch.tensor(embeddings)
     embedding_path = output_dir / "embeddings.pt"
     torch.save(embeddings, str(embedding_path))
-    logging.info(f"Embedding shape: {embeddings.shape}")
-    logging.info(f"Embedding saved at {str(embedding_path.resolve())}")
+    logger.info(f"Embedding shape: {embeddings.shape}")
+    logger.info(f"Embedding saved at {str(embedding_path.resolve())}")
 
 
 def main(args):
@@ -77,7 +78,7 @@ def main(args):
     for split in ["train", "eval"]:
         dataset_path = args.data_dir / f"{split}.json"
         dataset = json.loads(dataset_path.read_text())
-        logging.info(f"Dataset loaded at {str(dataset_path.resolve())}")
+        logger.info(f"Dataset loaded at {str(dataset_path.resolve())}")
 
         intents.update({instance["intent"] for instance in dataset})
         words.update(
@@ -87,7 +88,7 @@ def main(args):
     intent2idx = {tag: i for i, tag in enumerate(intents)}
     intent_tag_path = args.output_dir / "intent2idx.json"
     intent_tag_path.write_text(json.dumps(intent2idx, indent=2))
-    logging.info(f"Intent 2 index saved at {str(intent_tag_path.resolve())}")
+    logger.info(f"Intent 2 index saved at {str(intent_tag_path.resolve())}")
 
     build_vocab(words, args.vocab_size, args.output_dir, args.glove_path)
 
@@ -127,3 +128,4 @@ if __name__ == "__main__":
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     main(args)
+    # pass

@@ -6,14 +6,18 @@ import pickle
 from argparse import ArgumentParser, Namespace
 from pathlib import Path
 from typing import Dict
+import ast
 import numpy as np
+from termcolor import colored
+import logging
 
 import torch
-from tqdm import trange
-import tqdm
+from tqdm import trange, tqdm
 from torch import optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+from warmup_scheduler import GradualWarmupScheduler
+
 
 from dataset import SeqClsDataset
 from utils import Vocab
@@ -23,6 +27,84 @@ from model import SeqClassifier
 TRAIN = "train"
 DEV = "eval"
 SPLITS = [TRAIN, DEV]
+
+logging.basicConfig(
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    level=logging.INFO,
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
+
+def train(model:SeqClassifier,
+          optimizer:optim,
+          criterion:torch.nn.CrossEntropyLoss,
+          train_pbar:tqdm,
+          device:torch.device,
+          writer:SummaryWriter,
+          step:int):
+    model.train()
+    loss_record = []
+    acc_record = []
+    for batch in train_pbar:
+        optimizer.zero_grad()
+        data, label = batch['data'].to(device), batch['label'].to(device)
+        output= model(data)
+        loss = criterion(output, label)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optimizer.step()
+        step += 1
+        loss_record.append(loss.item())
+
+        #  # calculate acc
+        pred = output.argmax(dim=1)
+        acc = (pred == label).sum().item() / len(data)
+        acc_record.append(acc)
+        # Display current loss on tqdm progress bar.
+        train_pbar.set_postfix({'loss': loss.item(), 'acc': acc})
+
+    mean_train_loss = np.mean(loss_record)
+    mean_train_acc = np.mean(acc_record)
+    # draw in tensorboard
+    writer.add_scalar('Loss/train', mean_train_loss, step)
+    writer.add_scalar('acc/train', mean_train_acc, step)
+
+    return step
+
+@torch.no_grad()
+def validate(model:SeqClassifier,
+          criterion:torch.nn.CrossEntropyLoss,
+          valid_pbar:tqdm,
+          device:torch.device,
+          writer:SummaryWriter,
+          step:int
+        ):
+    model.eval()
+    loss_record = []
+    acc_record = []
+
+    for batch in valid_pbar:
+        data, label = batch['data'].to(device), batch['label'].to(device)
+        output= model(data)
+        loss = criterion(output, label)
+        loss_record.append(loss.item())
+
+        # calculate acc
+        pred = output.argmax(dim=1)
+        acc = (pred == label).sum().item() / len(data)
+        acc_record.append(acc)
+
+        # Display current loss on tqdm progress bar.
+        valid_pbar.set_postfix({'loss': loss.item(), 'acc': acc})
+
+    mean_valid_loss = np.mean(loss_record)
+    mean_valid_acc = np.mean(acc_record)
+    # show in tensorboard
+    writer.add_scalar('Loss/valid', mean_valid_loss, step)
+    writer.add_scalar('acc/train', mean_valid_acc, step)
+
+    return mean_valid_loss, mean_valid_acc
+
 
 
 def main(args):
@@ -51,29 +133,63 @@ def main(args):
     embeddings = torch.load(args.cache_dir / "embeddings.pt")  
     # TODO: init model and move model to target device(cpu / gpu)
     model = SeqClassifier(input_size=embeddings.shape[-1], embeddings=embeddings, hidden_size=args.hidden_size,
-                        num_layers=args.num_layers,dropout_rate=args.dropout_rate, pad_id=vocab.pad_id,
-                        bidirectional=args.bidirectional, num_class=len(intent2idx), model_name=args.model_name,
-                        init_method=args.init_weights, device=args.device)
+                        num_layers=args.num_layers,dropout_rate=args.dropout, pad_id=vocab.pad_id,
+                        bidirectional=True, num_class=len(intent2idx), model_name=args.model_name,
+                        init_method=args.init_weights, device=args.device).to(args.device)
 
     # TODO: init optimizer
-    optimizer = optim.AdamW(params=model.parameters(), lr=args.lr)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer=optimizer, T_max=args.num_epoch, eta_min=args.lr * 1e-1)
+    optimizer = optim.AdamW(params=model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    scheduler_cosine = optim.lr_scheduler.CosineAnnealingLR(optimizer=optimizer, T_max=args.num_epoch, eta_min=args.lr * 1e-1)
+    scheduler = GradualWarmupScheduler(optimizer,multiplier=1.5,total_epoch=args.num_epoch*0.2,after_scheduler=scheduler_cosine)
     criterion = torch.nn.CrossEntropyLoss()
 
-    writer = SummaryWriter() # Writer of tensoboard.
+    # Writer of tensoboard.
+    writer = SummaryWriter() 
 
     epoch_pbar = trange(args.num_epoch, desc="Epoch")
     best_loss = np.inf
-    step = 0
+    early_stop_count, step = 0, 0
+
     for epoch in epoch_pbar:
         # TODO: Training loop - iterate over train dataloader and update model weights
         # TODO: Evaluation loop - calculate accuracy and save model weights
-        model.train()
-        loss_record = []
-
+        
         train_pbar = tqdm(dataloaders[TRAIN], position=0, leave=True) 
         valid_pbar = tqdm(dataloaders[DEV], position=0, leave=True)
 
+        # training
+        logging.info(f' Epoch [{epoch+1}/{args.num_epoch}]')
+        step = train(model, optimizer, criterion, train_pbar, args.device, writer, step)
+        
+        #validating
+        logging.info(colored('(Valid)', 'yellow')+ f' Epoch [{epoch+1}/{args.num_epoch}]')
+        valid_loss, valid_acc = validate(model, criterion, valid_pbar, args.device, writer, step)
+
+        if valid_loss < best_loss :          
+            best_loss = valid_loss
+            model_dict = dict(epochs=epoch+1,
+                              loss=valid_loss,
+                              acc=valid_acc,
+                              batch_size=args.batch_size,
+                              init_weights=args.init_weights,
+                              model_state_dict=model.state_dict(),
+                              optimizer_state_dict=scheduler.state_dict()
+                            )
+            if round(valid_acc,3) > 0.9 :
+                # Save your best model
+                torch.save(model_dict, args.ckpt_dir / f'{round(valid_acc,3)}_model.ckpt') 
+                logging.info(colored('Saving model with loss {:.3f}...'.format(best_loss), 'red'))
+            early_stop_count = 0
+        else: 
+            early_stop_count += 1
+            logging.warning(colored(f'model has not improved performance for {early_stop_count} epochs', 'red'))
+
+        if early_stop_count > args.patience:
+            logging.warning(colored('\nModel is not imporving, so we halt the training session.', 'red'))
+            return 
+
+        scheduler.step()
+    
     # TODO: Inference on test set
 
 
@@ -99,13 +215,12 @@ def parse_args() -> Namespace:
     )
 
     # data
-    parser.add_argument("--max_len", type=int, default=128)
+    parser.add_argument("--max_len", type=int, default=28)
 
     # model
-    parser.add_argument("--hidden_size", type=int, default=512)
+    parser.add_argument("--hidden_size", type=int, default=128)
     parser.add_argument("--num_layers", type=int, default=2)
     parser.add_argument("--dropout", type=float, default=0.1)
-    parser.add_argument("--bidirectional", type=bool, default=True)
 
     # optimizer
     parser.add_argument("--lr", type=float, default=1e-3)
@@ -115,21 +230,29 @@ def parse_args() -> Namespace:
 
     # training
     parser.add_argument(
-        "--device", type=torch.device, help="cpu, cuda, cuda:0, cuda:1", default="cpu"
+        "--device", type=torch.device, help="cpu, cuda, cuda:0, cuda:1", default="cuda:0"
     )
 
     # init weights
     parser.add_argument("--init_weights", type=str, help="choose the init weights method from \
-    [uniform, normal, constant, xavier_uniform, xavier_normal, kaiming_uniform, kaiming_normal, orthogonal]",
-    default='normal',
-    choices=["uniform", "normal", "constant", "xavier_uniform", "xavier_normal", "kaiming_uniform", "kaiming_normal", "orthogonal"]
+    [uniform, normal, xavier_uniform, xavier_normal, kaiming_uniform, kaiming_normal, orthogonal, identity]",
+    default='identity',
+    choices=["uniform", "normal", "xavier_uniform", "xavier_normal", "kaiming_uniform", "kaiming_normal", \
+    "orthogonal", "identity"]
     )
 
     # which model
     parser.add_argument("--model_name", type=str, help="choose a model from [rnn, gru, lstm] to finish your task",
-                        default='rnn', choices=['rnn', 'gru', 'lstm']) 
+                        default='lstm', choices=['rnn', 'gru', 'lstm']) 
 
-    parser.add_argument("--num_epoch", type=int, default=100)
+    # total of epochs to run
+    parser.add_argument("--num_epoch", type=int, default=50)
+
+    # early stop patience
+    parser.add_argument("--patience", type=int, default=50, help="when meet early stop it will stop training")
+
+    # choose weight decay rate
+    parser.add_argument("--weight_decay", type=float, default=5e-3)
 
     args = parser.parse_args()
     return args

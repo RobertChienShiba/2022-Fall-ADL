@@ -160,8 +160,8 @@ cython_debug/
 #.idea/
 
 # glove pretrained embeddings
-glove*
-
+glove.*
 # preprocess data
 cache/
 ckpt/
+runs/
