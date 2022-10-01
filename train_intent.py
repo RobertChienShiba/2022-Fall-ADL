@@ -11,6 +11,7 @@ from termcolor import colored
 import logging
 
 import torch
+import torch.nn as nn
 from tqdm import trange, tqdm
 from torch import optim
 from torch.utils.data import DataLoader
