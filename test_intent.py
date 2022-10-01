@@ -2,13 +2,37 @@ import json
 import pickle
 from argparse import ArgumentParser, Namespace
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
+from tqdm import tqdm
+import csv
+import os
 
 import torch
+from torch.utils.data import DataLoader
 
 from dataset import SeqClsDataset
 from model import SeqClassifier
 from utils import Vocab
+
+
+@torch.no_grad()
+def predict(model:SeqClassifier,
+          test_pbar:tqdm,
+          device:torch.device
+        ):
+    model.eval()
+    test_ids: List[str] = []
+    preds: List[int] = []
+
+    for batch in test_pbar:
+        data = batch['data'].to(device)
+        output= model(data)
+        # calculate acc
+        pred = output.argmax(dim=1)
+        preds.extend(pred.cpu().detach().numpy().tolist())
+        test_ids.extend(batch['ids'])
+
+    return preds, test_ids
 
 
 def main(args):
@@ -21,26 +45,36 @@ def main(args):
     data = json.loads(args.test_file.read_text())
     dataset = SeqClsDataset(data, vocab, intent2idx, args.max_len)
     # TODO: crecate DataLoader for test dataset
-
+    dataloader = DataLoader(dataset=dataset,
+                            batch_size=args.batch_size,
+                            pin_memory=False,
+                            shuffle=False,
+                            collate_fn=dataset.collate_fn
+                            )
+    # embedding -> ([6491, 300])
     embeddings = torch.load(args.cache_dir / "embeddings.pt")
 
-    model = SeqClassifier(
-        embeddings,
-        args.hidden_size,
-        args.num_layers,
-        args.dropout,
-        args.bidirectional,
-        dataset.num_classes,
-    )
-    model.eval()
+    model = SeqClassifier(input_size=embeddings.shape[-1], embeddings=embeddings, hidden_size=args.hidden_size,
+                        num_layers=args.num_layers,dropout_rate=args.dropout, pad_id=vocab.pad_id,
+                        bidirectional=True, num_class=len(intent2idx), model_name=args.model_name,
+                        init_method=args.init_weights, device=args.device).to(args.device)
 
-    ckpt = torch.load(args.ckpt_path)
+
     # load weights into model
+    checkpoint = torch.load(args.ckpt_path)
+    model.load_state_dict(checkpoint['model_state_dict'])
 
     # TODO: predict dataset
+    test_pbar = tqdm(dataloader, position=0, leave=True) 
+    preds, test_ids = predict(model, test_pbar, args.device)
+    intents = [list(intent2idx.keys())[ids] for ids in preds]
 
     # TODO: write prediction to file (args.pred_file)
-
+    with open(args.pred_file / "pred.csv", 'w', encoding='utf-8', newline='')as file:
+        csvWriter = csv.writer(file)
+        csvWriter.writerow(['id', 'intent'])
+        for test_id, intent in zip(test_ids, intents):
+            csvWriter.writerow([test_id, intent])
 
 def parse_args() -> Namespace:
     parser = ArgumentParser()
@@ -62,27 +96,43 @@ def parse_args() -> Namespace:
         help="Path to model checkpoint.",
         required=True
     )
-    parser.add_argument("--pred_file", type=Path, default="pred.intent.csv")
+    parser.add_argument("--pred_file", type=Path, default="./pred/")
 
     # data
-    parser.add_argument("--max_len", type=int, default=128)
+    parser.add_argument("--max_len", type=int, default=28)
 
     # model
     parser.add_argument("--hidden_size", type=int, default=512)
     parser.add_argument("--num_layers", type=int, default=2)
-    parser.add_argument("--dropout", type=float, default=0.1)
-    parser.add_argument("--bidirectional", type=bool, default=True)
+    parser.add_argument("--dropout", type=float, default=0.4)
 
     # data loader
     parser.add_argument("--batch_size", type=int, default=128)
 
+    # testing 
     parser.add_argument(
-        "--device", type=torch.device, help="cpu, cuda, cuda:0, cuda:1", default="cpu"
+        "--device", type=torch.device, help="cpu, cuda, cuda:0, cuda:1", default="cuda:0"
     )
+
+    # init weights
+    parser.add_argument("--init_weights", type=str, help="choose the init weights method from \
+    [uniform, normal, xavier_uniform, xavier_normal, kaiming_uniform, kaiming_normal, orthogonal, identity]",
+    default='identity',
+    choices=["uniform", "normal", "xavier_uniform", "xavier_normal", "kaiming_uniform", "kaiming_normal", \
+    "orthogonal", "identity"]
+    )
+
+    # which model
+    parser.add_argument("--model_name", type=str, help="choose a model from [rnn, gru, lstm] to finish your task",
+                        default='gru', choices=['rnn', 'gru', 'lstm']) 
+
     args = parser.parse_args()
     return args
 
 
 if __name__ == "__main__":
     args = parse_args()
+    args.pred_file.mkdir(parents=True, exist_ok=True)
     main(args)
+
+# bash ./intent_cls.sh ./data/intent/test.json ./pred/intent

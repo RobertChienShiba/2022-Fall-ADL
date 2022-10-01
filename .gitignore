@@ -161,7 +161,12 @@ cython_debug/
 
 # glove pretrained embeddings
 glove.*
+
 # preprocess data
 cache/
 ckpt/
 runs/
+pred/
+
+# shell script
+downloads.sh
