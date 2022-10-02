@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Dict, List
 from tqdm import tqdm
 import csv
-import os
 
 import torch
 from torch.utils.data import DataLoader
@@ -70,7 +69,7 @@ def main(args):
     intents = [list(intent2idx.keys())[ids] for ids in preds]
 
     # TODO: write prediction to file (args.pred_file)
-    with open(args.pred_file / "pred.csv", 'w', encoding='utf-8', newline='')as file:
+    with open(args.pred_file / f"{args.hidden_size}_pred.csv", 'w', encoding='utf-8', newline='')as file:
         csvWriter = csv.writer(file)
         csvWriter.writerow(['id', 'intent'])
         for test_id, intent in zip(test_ids, intents):

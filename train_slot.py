@@ -1,3 +1,4 @@
+from ast import arg
 from distutils.log import debug
 import json
 import pickle
@@ -45,7 +46,7 @@ def train(model:SeqTagger,
     for batch in train_pbar:
         acc = 0
         optimizer.zero_grad()
-        # data, label, mask size ->(Batch, Seq_len)
+        # data, label, mask size -> (Batch, Seq_len)
         data, label, mask = batch['data'].to(device), batch['label'].to(device), batch['mask'].to(device)
         # output size -> (Batch, num_class, Seq_len)
         output= model(data)
@@ -59,6 +60,7 @@ def train(model:SeqTagger,
         # calculate acc
         # pred size -> (Batch, Seq_len)
         pred = output.argmax(dim=1)
+        # info : mask size -> (Batch, Seq_len)
         acc += sum([pred[idx].masked_select(text_mask).equal(label[idx].masked_select(text_mask)) \
                 for idx, text_mask in enumerate(mask)])
         acc_record.append(acc / len(data))
@@ -96,6 +98,7 @@ def validate(model:SeqTagger,
         loss_record.append(loss.item())
 
         # calculate acc
+        # pred size -> (Batch, Seq_len)
         pred = output.argmax(dim=1)
         acc += sum([pred[idx].masked_select(text_mask).equal(label[idx].masked_select(text_mask)) \
                 for idx, text_mask in enumerate(mask)])
@@ -188,7 +191,8 @@ def main(args):
                             )
             if valid_acc > 0.795 :
                 # Save your best model
-                torch.save(model_dict, args.ckpt_dir / '{:.3f}_model.ckpt'.format(valid_acc)) 
+                torch.save(model_dict, args.ckpt_dir / 
+                            '{}_{}_{:.3f}_model.ckpt'.format(args.batch_size, args.hidden_size, valid_acc)) 
                 torch.save(model_dict, args.ckpt_dir / 'best.pt') 
                 logging.info(colored('Saving model with acc {:.3f}...'.format(best_acc), 'red'))
             early_stop_count = 0
@@ -228,7 +232,7 @@ def parse_args() -> Namespace:
     parser.add_argument("--max_len", type=int, default=35)
 
     # model
-    parser.add_argument("--hidden_size", type=int, default=256)
+    parser.add_argument("--hidden_size", type=int, default=128)
     parser.add_argument("--num_layers", type=int, default=2)
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--bidirectional", type=bool, default=True)
@@ -271,4 +275,5 @@ if __name__ == "__main__":
     main(args)
 
 # python ./train_slot.py --init_weights normal --num_epoch 40 --dropout 0.4 --model_name gru --num_layer 2 
+# python ./train_slot.py --init_weights normal --num_epoch 40 --dropout 0.4 --model_name gru --num_layer 2 --hidden_size 256
 # python ./train_slot.py --init_weights normal --num_epoch 40 --dropout 0.4 --model_name gru --num_layer 2 --batch_size 32 --hidden_size 512
