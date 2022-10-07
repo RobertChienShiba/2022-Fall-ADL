@@ -140,7 +140,7 @@ def main(args):
         collate_fn=split_datasets.collate_fn)
         for split, split_datasets in datasets.items()
     }
-    # embedding -> ([6491, 300])
+    # embedding -> ([6491(vocab.tokens), 300])
     embeddings = torch.load(args.cache_dir / "embeddings.pt")  
     # TODO: init model and move model to target device(cpu / gpu)
     model = SeqClassifier(input_size=embeddings.shape[-1], embeddings=embeddings, hidden_size=args.hidden_size,

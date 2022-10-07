@@ -25,16 +25,17 @@ def predict(model:SeqTagger,
 
     for batch in test_pbar:
         data, mask = batch['data'].to(device), batch['mask'].to(device)
-        output= model(data)
+
+        output = model(data)
         # calculate acc
         # pred size -> (Batch, Seq_len)
         pred = output.argmax(dim=1)
+
+        # calculate acc
         preds.extend([pred[idx].masked_select(text_mask) for idx, text_mask in enumerate(mask)])
         test_ids.extend(batch['ids'])
 
     return preds, test_ids
-
-
 
 def main(args):
     # TODO: implement main function
@@ -77,7 +78,6 @@ def main(args):
         csvWriter.writerow(['id', 'tags'])
         for test_id, tag in zip(test_ids, tags):
             csvWriter.writerow([test_id, ' '.join(tag)])
-
 
 def parse_args() -> Namespace:
     parser = ArgumentParser()
@@ -133,7 +133,6 @@ def parse_args() -> Namespace:
 
     args = parser.parse_args()
     return args
-
 
 if __name__ == "__main__":
     args = parse_args()
