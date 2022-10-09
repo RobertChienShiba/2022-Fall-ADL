@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 
 from dataset import SeqClsDataset
 from model import SeqClassifier
-from utils import Vocab
+from utils import Vocab, same_seed
 
 
 @torch.no_grad()
@@ -35,6 +35,9 @@ def predict(model:SeqClassifier,
 
 
 def main(args):
+
+    same_seed()
+
     with open(args.cache_dir / "vocab.pkl", "rb") as f:
         vocab: Vocab = pickle.load(f)
 
@@ -102,8 +105,8 @@ def parse_args() -> Namespace:
 
     # model
     parser.add_argument("--hidden_size", type=int, default=512)
+    parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--num_layers", type=int, default=2)
-    parser.add_argument("--dropout", type=float, default=0.4)
 
     # data loader
     parser.add_argument("--batch_size", type=int, default=128)

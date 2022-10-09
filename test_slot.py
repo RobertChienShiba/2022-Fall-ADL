@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from dataset import SeqTaggingClsDataset
 from model import SeqTagger
-from utils import Vocab
+from utils import Vocab, same_seed
 
 @torch.no_grad()
 def predict(model:SeqTagger,
@@ -39,6 +39,8 @@ def predict(model:SeqTagger,
 
 def main(args):
     # TODO: implement main function
+    same_seed()
+
     with open(args.cache_dir / "vocab.pkl", "rb") as f:
         vocab: Vocab = pickle.load(f)
 
@@ -85,7 +87,6 @@ def parse_args() -> Namespace:
         "--test_file",
         type=Path,
         help="Path to the test file.",
-        default = "./data/slot/test.json",
         required=True
     )
     parser.add_argument(
@@ -97,7 +98,6 @@ def parse_args() -> Namespace:
     parser.add_argument(
         "--ckpt_path",
         type=Path,
-        default = "./ckpt/slot/best.pt",
         help="Path to model checkpoint.",
         required=True
     )

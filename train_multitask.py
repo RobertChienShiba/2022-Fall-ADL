@@ -4,7 +4,6 @@ import json
 import pickle
 from argparse import ArgumentParser, Namespace
 from pathlib import Path
-from statistics import mode
 from tkinter.tix import INTEGER
 from typing import Dict, List
 import logging
