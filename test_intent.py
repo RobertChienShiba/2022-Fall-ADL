@@ -72,7 +72,7 @@ def main(args):
     intents = [list(intent2idx.keys())[ids] for ids in preds]
 
     # TODO: write prediction to file (args.pred_file)
-    with open(args.pred_file / f"{args.hidden_size}_pred.csv", 'w', encoding='utf-8', newline='')as file:
+    with open(args.pred_file, 'w', encoding='utf-8', newline='')as file:
         csvWriter = csv.writer(file)
         csvWriter.writerow(['id', 'intent'])
         for test_id, intent in zip(test_ids, intents):
@@ -98,7 +98,7 @@ def parse_args() -> Namespace:
         help="Path to model checkpoint.",
         required=True
     )
-    parser.add_argument("--pred_file", type=Path, default="./pred/")
+    parser.add_argument("--pred_file", type=Path, default="./pred/intent")
 
     # data
     parser.add_argument("--max_len", type=int, default=28)
@@ -134,7 +134,9 @@ def parse_args() -> Namespace:
 
 if __name__ == "__main__":
     args = parse_args()
-    args.pred_file.mkdir(parents=True, exist_ok=True)
+    if args.pred_file == Path('./pred/intent'):
+        args.pred_file.mkdir(parents=True, exist_ok=True)
+        args.pred_file = args.pred_file / f"{args.hidden_size}_pred.csv"
     main(args)
 
 # bash ./intent_cls.sh ./data/intent/test.json ./pred/intent

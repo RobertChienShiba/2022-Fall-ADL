@@ -170,3 +170,6 @@ pred/
 
 # shell script
 downloads.sh
+
+# python script
+nltk_install.py

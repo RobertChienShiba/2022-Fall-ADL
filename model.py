@@ -5,6 +5,7 @@ import logging
 import torch
 import torch.nn as nn
 from torch.nn import Embedding
+from torchcrf import CRF
 
 class SeqClassifier(nn.Module):
     def __init__(
@@ -29,6 +30,7 @@ class SeqClassifier(nn.Module):
         self.bidirectional = bidirectional
         self.num_class = num_class
         self.init_method = init_method
+        self.device = device
 
         if isinstance(embeddings, torch.Tensor):
             self.embed = nn.Sequential(
@@ -73,7 +75,6 @@ class SeqClassifier(nn.Module):
         else:
             self.classifier = None
             
-        self.device = device
         self.apply(self._init_weights)
 
     def _init_weights(self, module) -> None :
@@ -191,7 +192,8 @@ class MultitaskNet(SeqClassifier):
         num_class: Dict,
         model_name: str,
         init_method: str,
-        device: torch.device
+        device: torch.device,
+        crf = None
     ) -> None:
         super(MultitaskNet, self).__init__(input_size, embeddings, hidden_size, num_layers, dropout_rate, 
                                 pad_id, bidirectional, num_class, model_name, init_method, device)
@@ -213,6 +215,12 @@ class MultitaskNet(SeqClassifier):
             nn.Dropout(dropout_rate),
             nn.Linear(hidden_size * 2, num_class['slot'])
         )
+
+        if crf :
+            self.crf = CRF(num_tags=num_class['slot'], batch_first=True)
+        else:
+            self.crf = None
+
         self.apply(self._init_weights)
 
     def forward_intent(self, h_n):

@@ -33,14 +33,16 @@ def predict(model: MultitaskNet,
         data = batch['data'].to(device)
 
         output = model(data, task)
-        # pred size -> (Batch, Seq_len)
-        pred = output.argmax(dim=1)
 
         if task == 'intent':
+            # pred size -> (Batch, Seq_len)
+            pred = output.argmax(dim=1)
             preds.extend(pred.cpu().detach().numpy().tolist())
         elif task == 'slot':
             mask = batch['mask'].to(device)
-            preds.extend([pred[idx].masked_select(text_mask) for idx, text_mask in enumerate(mask)])
+            output = output.transpose(1, 2)
+            pred = model.crf.decode(output, mask)
+            preds.extend([pred[idx] for idx, text_mask in enumerate(mask)])
         else:
             raise NameError(f'YOU CHOOSE THE WRONG {task} !!! please choose one of ["intent", "slot"] task')
 
@@ -97,7 +99,7 @@ def main(args):
         csvWriter = csv.writer(file)
         if args.task_type == 'slot':
             csvWriter.writerow(['id', 'tags'])
-            tags = [[idx2label[args.task_type][id.item()] for id in ids]for ids in preds]
+            tags = [[idx2label[args.task_type][id] for id in ids]for ids in preds]
             for test_id, tag in zip(test_ids, tags):
                 csvWriter.writerow([test_id, ' '.join(tag)])
         elif args.task_type == 'intent':
@@ -141,7 +143,7 @@ def parse_args() -> Namespace:
     parser.add_argument("--num_layers", type=int, default=2)
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--bidirectional", type=bool, default=True)
-    parser.add_argument("--crf", type=bool, default=False)
+    parser.add_argument("--crf", type=bool, default=True)
 
     # data loader
     parser.add_argument("--batch_size", type=int, default=128)
@@ -167,10 +169,9 @@ def parse_args() -> Namespace:
 
 if __name__ == "__main__":
     args = parse_args()
-    if args.pred_file == Path("./pred/slot"):
+    if args.pred_file == Path('./pred/slot'):
         args.pred_file.mkdir(parents=True, exist_ok=True)
-        args.pred_file =  args.pred_file / f"{args.crf}_{args.batch_size}_{args.hidden_size}_pred.csv"
+        args.pred_file = args.pred_file / f'{args.crf}_{args.batch_size}_{args.hidden_size}_pred.csv'
     main(args)
 
-# python ./test_multitask.py --test_file ./data/slot/test.json --task_type slot --ckpt_path ./ckpt/slot/seqeval_0.826_23_22_512_0.842_model.ckpt --num_layers 2 --batch_size 64 --hidden_size 512 --init_weights normal
-# python ./test_multitask.py --test_file ./data/intent/test.json --task_type intent --ckpt_path ./ckpt/intent/best.pt --num_layers 2 --batch_size 128 --hidden_size 512 --init_weights normal
+# python ./test_multitask_crf.py --test_file ./data/slot/test.json --task_type slot --ckpt_path ./ckpt/slot/best.pt --num_layers 2 --batch_size 64 --hidden_size 512 --init_weights normal

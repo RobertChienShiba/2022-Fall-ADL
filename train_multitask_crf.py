@@ -1,6 +1,7 @@
 from ast import Pass, arg
 from distutils.log import debug
 import json
+from multiprocessing import reduction
 import pickle
 from argparse import ArgumentParser, Namespace
 from pathlib import Path
@@ -70,17 +71,28 @@ def train(model:MultitaskNet,
 
         # output size -> (Batch, num_class)
         intent_output = model(intent_data, INTENT)
-        # output size -> (Batch, num_class, Seq_len)
-        slot_output = model(slot_data, SLOT)
+        if model.crf:
+            slot_output = model(slot_data, SLOT)
+            slot_output = slot_output.transpose(1, 2)
+            slot_loss = -model.crf(slot_output, slot_label, slot_mask, reduction='sum')
+            crf_pred = model.crf.decode(slot_output, slot_mask)
+            intent_loss = criterion(F.log_softmax(intent_output, dim=1), intent_label)
+            slot_acc += sum([crf_pred[idx] == (slot_label[idx].masked_select(text_mask).cpu().detach().numpy().tolist()) \
+                for idx, text_mask in enumerate(slot_mask)])
+        else:
+            # output size -> (Batch, num_class, Seq_len)
+            slot_output = model(slot_data, SLOT)
+            slot_loss = criterion(slot_output, slot_label)
+            intent_loss = criterion(intent_output, intent_label)
+            # pred size -> (Batch, Seq_len)
+            slot_pred = slot_output.argmax(dim=1)
+            slot_acc += sum([slot_pred[idx].masked_select(text_mask).equal(slot_label[idx].masked_select(text_mask)) \
+                for idx, text_mask in enumerate(slot_mask)])
 
-        intent_loss = criterion(intent_output, intent_label)
-        slot_loss = criterion(slot_output, slot_label)
         # intent_loss = criterion(F.log_softmax(intent_output, dim=1), intent_label)
         # slot_loss = criterion(F.log_softmax(slot_output, dim=1), slot_label)
         # pred size -> (Batch)
         intent_pred = intent_output.argmax(dim=1)
-        # pred size -> (Batch, Seq_len)
-        slot_pred = slot_output.argmax(dim=1)
 
         loss = intent_loss + slot_loss
         loss.backward()
@@ -92,8 +104,6 @@ def train(model:MultitaskNet,
         # info : mask size -> (Batch, Seq_len)
         intent_acc = (intent_pred == intent_label).sum().item() / len(intent_data)
         intent_acc_record.append(intent_acc)
-        slot_acc += sum([slot_pred[idx].masked_select(text_mask).equal(slot_label[idx].masked_select(text_mask)) \
-                for idx, text_mask in enumerate(slot_mask)])
         slot_acc_record.append(slot_acc / len(slot_data))
 
     mean_intent_loss = np.mean(intent_loss_record)
@@ -129,16 +139,27 @@ def validate(model:MultitaskNet,
         # argument_data = argument_tagging(data, label, dict(tagging_corpus), vocab)
         # output size -> (Batch, num_class)
         intent_output = model(intent_data, INTENT)
-        # output size -> (Batch, num_class, Seq_len)
-        slot_output = model(slot_data, SLOT)
-
-        intent_loss = criterion(intent_output, intent_label)
-        slot_loss = criterion(slot_output, slot_label)
+        if model.crf:
+            slot_output = model(slot_data, SLOT)
+            slot_output = slot_output.transpose(1, 2)
+            slot_loss = -model.crf(slot_output, slot_label, slot_mask, reduction='sum')
+            crf_pred = model.crf.decode(slot_output, slot_mask)
+            intent_loss = criterion(F.log_softmax(intent_output, dim=1), intent_label)
+            slot_acc += sum([crf_pred[idx] == (slot_label[idx].masked_select(text_mask).cpu().detach().numpy().tolist()) \
+                for idx, text_mask in enumerate(slot_mask)])
+        else:
+            # output size -> (Batch, num_class, Seq_len)
+            slot_output = model(slot_data, SLOT)
+            slot_loss = criterion(slot_output, slot_label)
+            intent_loss = criterion(intent_output, intent_label)
+            # pred size -> (Batch, Seq_len)
+            slot_pred = slot_output.argmax(dim=1)
+            slot_acc += sum([slot_pred[idx].masked_select(text_mask).equal(slot_label[idx].masked_select(text_mask)) \
+                for idx, text_mask in enumerate(slot_mask)])
         # intent_loss = criterion(F.log_softmax(intent_output, dim=1), intent_label)
         # slot_loss = criterion(F.log_softmax(slot_output, dim=1), slot_label)
         # pred size -> (Batch, Seq_len)
         intent_pred = intent_output.argmax(dim=1)
-        slot_pred = slot_output.argmax(dim=1)
 
         intent_loss_record.append(intent_loss.item())
         slot_loss_record.append(slot_loss.item())
@@ -147,8 +168,6 @@ def validate(model:MultitaskNet,
         # info : mask size -> (Batch, Seq_len)
         intent_acc = (intent_pred == intent_label).sum().item() / len(intent_data)
         intent_acc_record.append(intent_acc)
-        slot_acc += sum([slot_pred[idx].masked_select(text_mask).equal(slot_label[idx].masked_select(text_mask)) \
-                for idx, text_mask in enumerate(slot_mask)])
         slot_acc_record.append(slot_acc / len(slot_data))
 
 
@@ -172,19 +191,26 @@ def seqeval_eval(model: MultitaskNet,
     for batch in valid_pbar:
         # data, label, mask size ->(Batch, Seq_len)
         data, label, mask = batch['data'].to(device), batch['label'].to(device), batch['mask'].to(device)
+        if model.crf:
+            slot_output = model(data, SLOT)
+            slot_output = slot_output.transpose(1, 2)
+            crf_pred = model.crf.decode(slot_output, mask)
+            preds.extend(crf_pred)
 
-        # output size -> (Batch, num_class, Seq_len)
-        output = model(data, SLOT)
-        pred = output.argmax(dim=1)
+        else:
+            # output size -> (Batch, num_class, Seq_len)
+            slot_output = model(data, SLOT)
+            # pred size -> (Batch, Seq_len)
+            pred = slot_output.argmax(dim=1)
+            preds.extend([pred[idx].masked_select(text_mask).cpu().detach().numpy().tolist() for idx, text_mask in enumerate(mask)])
 
-        preds.extend([pred[idx].masked_select(text_mask).cpu().detach().numpy().tolist() for idx, text_mask in enumerate(mask)])
         ground_truth.extend([label[idx].masked_select(text_mask).cpu().detach().numpy().tolist() for idx, text_mask in enumerate(mask)])
 
     return preds, ground_truth
      
 def main(args):
     # TODO: implement main function
-    same_seed()
+    same_seed(1234)
 
     task_datasets = [SeqClsDataset, SeqTaggingClsDataset]
     max_lens = [args.icf_max_len, args.slt_max_len]
@@ -225,7 +251,7 @@ def main(args):
     
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     # scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer=optimizer, T_max=args.num_epoch, eta_min=args.lr * 1e-2)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.3, patience=4, eps=5e-6)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5, eps=1e-5)
     if args.crf :
         criterion = nn.NLLLoss(reduction='sum')
     else:
@@ -383,7 +409,7 @@ def parse_args() -> Namespace:
     parser.add_argument("--num_layers", type=int, default=2)
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--bidirectional", type=bool, default=True)
-    parser.add_argument("--crf", type=bool, default=False)
+    parser.add_argument("--crf", type=bool, default=True)
 
     # optimizer
     parser.add_argument("--lr", type=float, default=1e-3)
@@ -422,6 +448,4 @@ if __name__ == "__main__":
     args.ckpt_dir.mkdir(parents=True, exist_ok=True)
     main(args)
 
-# python ./train_multitask.py --init_weights normal --num_epoch 20 --dropout 0.4 --model_name gru --num_layer 2 --hidden_size 128
-# python ./train_multitask.py --init_weights normal --num_epoch 20 --dropout 0.4 --model_name gru --num_layer 2 --hidden_size 256
-# python ./train_multitask.py --init_weights normal --num_epoch 40 --dropout 0.4 --model_name gru --num_layer 2 --hidden_size 512 --batch_size 64
+    # python ./train_multitask_crf.py --init_weights normal --num_epoch 40 --dropout 0.4 --model_name gru --num_layer 2 --hidden_size 512 --batch_size 64

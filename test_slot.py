@@ -75,7 +75,7 @@ def main(args):
     tags = [np.array(list(tag2idx.keys()))[ids.cpu().detach().numpy()] for ids in preds]
 
     # TODO: write prediction to file (args.pred_file)
-    with open(args.pred_file / f"{args.batch_size}_{args.hidden_size}_pred.csv", 'w', encoding='utf-8', newline='')as file:
+    with open(args.pred_file , 'w', encoding='utf-8', newline='')as file:
         csvWriter = csv.writer(file)
         csvWriter.writerow(['id', 'tags'])
         for test_id, tag in zip(test_ids, tags):
@@ -136,8 +136,10 @@ def parse_args() -> Namespace:
 
 if __name__ == "__main__":
     args = parse_args()
-    args.pred_file.mkdir(parents=True, exist_ok=True)
+    if args.pred_file == Path('./pred/slot'):
+        args.pred_file.mkdir(parents=True, exist_ok=True)
+        args.pred_file = args.pred_file / f"{args.batch_size}_{args.hidden_size}_pred.csv"
     main(args)
 
 # python ./test_slot.py --test_file ./data/slot/test.json  --ckpt_path ckpt/slot/best.pt  --pred_file ./pred/slot --hidden_size 256 --init_weights normal
-# bash ./slot_tag.sh ./data/slot/test.json ./pred/slot 256
+# bash ./slot_tag.sh ./data/slot/test.json ./pred/slot 
