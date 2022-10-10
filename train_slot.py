@@ -13,7 +13,6 @@ import torch.nn as nn
 from torch import optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm, trange
-from torch.utils.tensorboard import SummaryWriter
 
 from dataset import SeqTaggingClsDataset
 from model import SeqTagger
@@ -39,8 +38,6 @@ def train(model:SeqTagger,
           criterion: nn.CrossEntropyLoss,
           train_pbar: tqdm,
           device: torch.device,
-          writer: SummaryWriter,
-          step: int,
           tagging_corpus,
           vocab: Vocab):
 
@@ -66,7 +63,6 @@ def train(model:SeqTagger,
         loss.backward()
         nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
-        # step += 1
         loss_record.append(loss.item())
 
         # calculate acc
@@ -81,9 +77,6 @@ def train(model:SeqTagger,
 
     mean_train_loss = np.mean(loss_record)
     mean_train_acc = np.mean(acc_record)
-    # draw in tensorboard
-    # writer.add_scalar('Loss/train', mean_train_loss, step)
-    # writer.add_scalar('acc/train', mean_train_acc, step)
 
     return mean_train_loss, mean_train_acc
 
@@ -92,8 +85,7 @@ def validate(model:SeqTagger,
           criterion:nn.CrossEntropyLoss,
           valid_pbar: tqdm,
           device: torch.device,
-          writer: SummaryWriter,
-          step: int):
+        ):
 
     model.eval()
 
@@ -123,9 +115,6 @@ def validate(model:SeqTagger,
 
     mean_valid_loss = np.mean(loss_record)
     mean_valid_acc = np.mean(acc_record)
-    # show in tensorboard
-    # writer.add_scalar('Loss/valid', mean_valid_loss, step)
-    # writer.add_scalar('acc/train', mean_valid_acc, step)
 
     return mean_valid_loss, mean_valid_acc
 
@@ -171,13 +160,13 @@ def main(args):
 
     for split, split_data in data.items():
         datasets[split] = SeqTaggingClsDataset(split_data, vocab, tag2idx, args.max_len)
+        # For data argumentation and calculate different weights for loss function
         for one in split_data:
             for token, tag in zip(one['tokens'], one['tags']) :
                 token = vocab.token_to_id(token)
                 tag = tag2idx[tag] 
                 tagging_corpus[tag].add(token)
     
-  
     dataloaders : Dict[str, DataLoader] = {
         split : DataLoader(dataset=split_datasets,
         batch_size=args.batch_size,
@@ -200,10 +189,9 @@ def main(args):
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=4, eps=1e-5)
     criterion = nn.CrossEntropyLoss()
 
-    writer = SummaryWriter() 
 
     epoch_pbar = trange(args.num_epoch, desc="Epoch")
-    best_acc, step, early_stop_count = 0, 0, 0
+    best_acc, early_stop_count = 0, 0
 
     for epoch in epoch_pbar:
         # TODO: Training loop - iterate over train dataloader and update model weights
@@ -214,32 +202,26 @@ def main(args):
     
         # training
         logging.info(f' Epoch [{epoch+1}/{args.num_epoch}]')
-        train_loss, train_acc = train(model, optimizer, criterion, train_pbar, args.device, writer, step, tagging_corpus, vocab)
+        train_loss, train_acc = train(model, optimizer, criterion, train_pbar, args.device, tagging_corpus, vocab)
         logging.info(f'train_loss: {train_loss:.4f}, train_acc: {train_acc:.3f}')
 
         # validating
         logging.info(colored('(Valid)', 'yellow')+ f' Epoch [{epoch+1}/{args.num_epoch}]')
-        valid_loss, valid_acc = validate(model, criterion, valid_pbar, args.device, writer, step)
+        valid_loss, valid_acc = validate(model, criterion, valid_pbar, args.device)
         logging.info(f'val_loss: {valid_loss:.4f}, val_acc: {valid_acc:.3f}')
 
         if valid_acc > best_acc :          
             best_acc = valid_acc
-            model_dict = dict(epochs=epoch+1,
-                              loss=valid_loss,
-                              acc=valid_acc,
-                              batch_size=args.batch_size,
-                              hidden_size = args.hidden_size,
+            model_dict = dict(loss=valid_loss,
                               dropout = args.dropout,
                               init_weights=args.init_weights,
-                              num_layers = args.num_layers,
-                              model_name = args.model_name,
                               model_state_dict=model.state_dict(),
                               optimizer_state_dict=scheduler.state_dict()
                             )
             if valid_acc > 0.795 :
                 # Save your best model
-                torch.save(model_dict, args.ckpt_dir / 
-                            '{}_{}_{:.3f}_model.ckpt'.format(args.batch_size, args.hidden_size, valid_acc)) 
+                torch.save(model_dict, args.ckpt_dir / 'E{}_{}_{}_B{}_H{}_{:.3f}_model.ckpt'.format(epoch+1, model.__class__.__name__, 
+                        args.model_name, args.batch_size, args.hidden_size, valid_acc)) 
                 torch.save(model_dict, args.ckpt_dir / 'best.pt') 
                 logging.info(colored('Saving model with acc {:.3f}...'.format(best_acc), 'red'))
             early_stop_count = 0
@@ -294,8 +276,8 @@ def main(args):
 
     # plt.show()
 
-    print({k : np.mean(v) for k, v in dict(stats).items()})
-    print({k : len(v) for k, v in dict(stats).items()})
+    print({idx2tag[k] : np.mean(v) for k, v in dict(stats).items()})
+    # print({k : len(v) for k, v in dict(stats).items()})
     print('Joint Accuracy = {:.3f}'.format(joint_acc / len(ground_truths)))
     print('Token Accuracy = {:.3f}'.format(accuracy_score(ground_truths, predictions)))
     print('F1 score = {:.2f}'.format(f1_score(ground_truths, predictions)))
@@ -327,7 +309,7 @@ def parse_args() -> Namespace:
     parser.add_argument("--max_len", type=int, default=35)
 
     # model
-    parser.add_argument("--hidden_size", type=int, default=256)
+    parser.add_argument("--hidden_size", type=int, default=128)
     parser.add_argument("--num_layers", type=int, default=2)
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--bidirectional", type=bool, default=True)
@@ -352,7 +334,7 @@ def parse_args() -> Namespace:
                         default='gru', choices=['rnn', 'gru', 'lstm']) 
 
     # total of epochs to run
-    parser.add_argument("--num_epoch", type=int, default=1)
+    parser.add_argument("--num_epoch", type=int, default=20)
 
     # early stop patience
     parser.add_argument("--patience", type=int, default=15, help="when meet early stop it will stop training")

@@ -1,11 +1,7 @@
-from ast import Pass, arg
-from distutils.log import debug
 import json
-from multiprocessing import reduction
 import pickle
 from argparse import ArgumentParser, Namespace
 from pathlib import Path
-from tkinter.tix import INTEGER
 from typing import Dict, List
 import logging
 from termcolor import colored
@@ -72,11 +68,13 @@ def train(model:MultitaskNet,
         # output size -> (Batch, num_class)
         intent_output = model(intent_data, INTENT)
         if model.crf:
+            # output size -> (Batch, num_class, Seq_len)
             slot_output = model(slot_data, SLOT)
             slot_output = slot_output.transpose(1, 2)
             slot_loss = -model.crf(slot_output, slot_label, slot_mask, reduction='sum')
             crf_pred = model.crf.decode(slot_output, slot_mask)
             intent_loss = criterion(F.log_softmax(intent_output, dim=1), intent_label)
+            # info : mask size -> (Batch, Seq_len)
             slot_acc += sum([crf_pred[idx] == (slot_label[idx].masked_select(text_mask).cpu().detach().numpy().tolist()) \
                 for idx, text_mask in enumerate(slot_mask)])
         else:
@@ -86,12 +84,10 @@ def train(model:MultitaskNet,
             intent_loss = criterion(intent_output, intent_label)
             # pred size -> (Batch, Seq_len)
             slot_pred = slot_output.argmax(dim=1)
+            # info : mask size -> (Batch, Seq_len)
             slot_acc += sum([slot_pred[idx].masked_select(text_mask).equal(slot_label[idx].masked_select(text_mask)) \
                 for idx, text_mask in enumerate(slot_mask)])
 
-        # intent_loss = criterion(F.log_softmax(intent_output, dim=1), intent_label)
-        # slot_loss = criterion(F.log_softmax(slot_output, dim=1), slot_label)
-        # pred size -> (Batch)
         intent_pred = intent_output.argmax(dim=1)
 
         loss = intent_loss + slot_loss
@@ -101,7 +97,6 @@ def train(model:MultitaskNet,
         slot_loss_record.append(slot_loss.item())
 
         # calculate acc
-        # info : mask size -> (Batch, Seq_len)
         intent_acc = (intent_pred == intent_label).sum().item() / len(intent_data)
         intent_acc_record.append(intent_acc)
         slot_acc_record.append(slot_acc / len(slot_data))
@@ -145,6 +140,7 @@ def validate(model:MultitaskNet,
             slot_loss = -model.crf(slot_output, slot_label, slot_mask, reduction='sum')
             crf_pred = model.crf.decode(slot_output, slot_mask)
             intent_loss = criterion(F.log_softmax(intent_output, dim=1), intent_label)
+            # info : mask size -> (Batch, Seq_len)
             slot_acc += sum([crf_pred[idx] == (slot_label[idx].masked_select(text_mask).cpu().detach().numpy().tolist()) \
                 for idx, text_mask in enumerate(slot_mask)])
         else:
@@ -154,10 +150,10 @@ def validate(model:MultitaskNet,
             intent_loss = criterion(intent_output, intent_label)
             # pred size -> (Batch, Seq_len)
             slot_pred = slot_output.argmax(dim=1)
+            # info : mask size -> (Batch, Seq_len)
             slot_acc += sum([slot_pred[idx].masked_select(text_mask).equal(slot_label[idx].masked_select(text_mask)) \
                 for idx, text_mask in enumerate(slot_mask)])
-        # intent_loss = criterion(F.log_softmax(intent_output, dim=1), intent_label)
-        # slot_loss = criterion(F.log_softmax(slot_output, dim=1), slot_label)
+
         # pred size -> (Batch, Seq_len)
         intent_pred = intent_output.argmax(dim=1)
 
@@ -165,7 +161,6 @@ def validate(model:MultitaskNet,
         slot_loss_record.append(slot_loss.item())
 
         # calculate acc
-        # info : mask size -> (Batch, Seq_len)
         intent_acc = (intent_pred == intent_label).sum().item() / len(intent_data)
         intent_acc_record.append(intent_acc)
         slot_acc_record.append(slot_acc / len(slot_data))
@@ -223,6 +218,7 @@ def main(args):
     vocab = {}
 
     for task, label_path, task_dataset, max_len in zip(TASKS, label_paths, task_datasets, max_lens):
+        (args.ckpt_dir / task).mkdir(parents=True, exist_ok=True)
         with open(args.cache_dir / task / "vocab.pkl", "rb") as f:
             vocab[task]: Vocab = pickle.load(f)
         label_idx_path = args.cache_dir / task / label_path
@@ -234,6 +230,7 @@ def main(args):
             dataset = task_dataset(data, vocab[task], label2idx, max_len)
             if task == SLOT :
                 args.batch_size = int(np.ceil(len(dataset) / len(loaders[INTENT][split])))
+                # For data argumentation and calculate different weights for loss function
                 for one in data :
                     for token, tag in zip(one['tokens'], one['tags']) :
                         token = vocab[task].token_to_id(token)
@@ -261,6 +258,7 @@ def main(args):
 
     epoch_pbar = trange(args.num_epoch, desc="Epoch")
     intent_best_acc, slot_best_acc, early_stop_count = 0, 0, 0
+    logging.info(f'Use CRF: {args.crf}')
 
     for epoch in epoch_pbar:
         # TODO: Training loop - iterate over train dataloader and update model weights
@@ -288,29 +286,26 @@ def main(args):
 
         def imporove_model(task_val_acc, task_best_acc, save_thresold, task):       
             if task_val_acc > task_best_acc :          
-                model_dict = dict(epochs=epoch+1,
-                                loss= (intent_valid_loss if task == 'intent' else slot_valid_loss),
-                                acc=task_val_acc,
-                                batch_size=loaders[task][DEV].batch_size,
-                                hidden_size = args.hidden_size,
+                model_dict = dict(loss=(intent_valid_loss if task == 'intent' else slot_valid_loss),
                                 dropout = args.dropout,
                                 init_weights=args.init_weights,
-                                num_layers = args.num_layers,
-                                model_name = args.model_name,
+                                model_name=args.model_name,
+                                crf=args.crf,
                                 model_state_dict=model.state_dict(),
                                 optimizer_state_dict=scheduler.state_dict()
                                 )
                 if task_val_acc > save_thresold :
                     # Save your best model
                     torch.save(model_dict, args.ckpt_dir / task /
-                        '{}_{}_{}_{}_{:.3f}_model.ckpt'.format(epoch+1, args.crf, loaders[task][DEV].batch_size, args.hidden_size, task_val_acc)) 
+                        'E{}_{}_{}_B{}_H{}_{:.3f}_model.ckpt'.format(epoch+1, model.__class__.__name__, 
+                                        args.crf ,loaders[task][DEV].batch_size, args.hidden_size, task_val_acc)) 
                     torch.save(model_dict, args.ckpt_dir / task / f'best_{args.crf}.pt') 
                     logging.info(colored('Saving {} model with acc {:.3f}...'.format(task, task_val_acc), 'red'))
                 return task_val_acc
             else:
                 return task_best_acc
         
-        intent_best_acc = imporove_model(intent_valid_acc, intent_best_acc, 0.943, INTENT)  
+        intent_best_acc = imporove_model(intent_valid_acc, intent_best_acc, 0.935, INTENT)  
         slot_best_acc = imporove_model(slot_valid_acc, slot_best_acc, 0.82, SLOT)
 
         if intent_best_acc == intent_valid_acc or slot_best_acc == slot_valid_acc:
@@ -326,7 +321,8 @@ def main(args):
         scheduler.step(intent_valid_loss + slot_valid_loss)
     
     # load weights into model
-    checkpoint = torch.load(args.ckpt_dir / SLOT / 'best.pt')
+    checkpoint = torch.load(args.ckpt_dir / SLOT / f'best_{args.crf}.pt')
+    logging.info(f'Use CRF: {checkpoint["crf"]}')
     model.load_state_dict(checkpoint['model_state_dict'])
 
     predictions, ground_truths = seqeval_eval(model, slot_valid_pbar, args.device)
@@ -334,6 +330,7 @@ def main(args):
 
     stats = defaultdict(list)
     # y_pred, y_true = [], []
+
     # cal joint acc
     for prediction, ground_truth in zip(predictions, ground_truths):
         # it will have the same length after mask
@@ -351,7 +348,7 @@ def main(args):
         # y_true.extend(ground_truth)
         # y_pred.extend(prediction)
         
-    
+
     # import seaborn as sns
     # import matplotlib.pyplot as plt
     # import matplotlib
@@ -371,8 +368,8 @@ def main(args):
 
     # plt.show()
 
-    print({k : np.mean(v) for k, v in dict(stats).items()})
-    print({k : len(v) for k, v in dict(stats).items()})
+    print({idx2label[SLOT][k] : np.mean(v) for k, v in dict(stats).items()})
+    # print({k : len(v) for k, v in dict(stats).items()})
     print('Joint Accuracy = {:.3f}'.format(joint_acc / len(ground_truths)))
     print('Token Accuracy = {:.3f}'.format(accuracy_score(ground_truths, predictions)))
     print('F1 score = {:.2f}'.format(f1_score(ground_truths, predictions)))
@@ -409,7 +406,7 @@ def parse_args() -> Namespace:
     parser.add_argument("--num_layers", type=int, default=2)
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--bidirectional", type=bool, default=True)
-    parser.add_argument("--crf", type=bool, default=True)
+    parser.add_argument("--crf", action='store_true', default=False)
 
     # optimizer
     parser.add_argument("--lr", type=float, default=1e-3)
@@ -424,11 +421,12 @@ def parse_args() -> Namespace:
     # init weights
     parser.add_argument("--init_weights", type=str, help="choose the initial weights method from \
     [normal, xavier_normal, kaiming_normal, orthogonal, identity]",
+    choices=['normal', 'xavier_normal', 'kaiming_normal', 'orthogonal', 'identity'],
     default='identity')
 
     # which model
     parser.add_argument("--model_name", type=str, help="choose a model from [rnn, gru, lstm] to finish your task",
-                        default='gru', choices=['rnn', 'gru', 'lstm']) 
+                        default='rnn', choices=['rnn', 'gru', 'lstm']) 
 
     # total of epochs to run
     parser.add_argument("--num_epoch", type=int, default=20)
@@ -445,7 +443,7 @@ def parse_args() -> Namespace:
 
 if __name__ == "__main__":
     args = parse_args()
-    args.ckpt_dir.mkdir(parents=True, exist_ok=True)
     main(args)
 
-    # python ./train_multitask_crf.py --init_weights normal --num_epoch 40 --dropout 0.4 --model_name gru --num_layer 2 --hidden_size 512 --batch_size 64
+# python ./train_multitask_crf.py --init_weights normal --num_epoch 40 --dropout 0.4 --model_name gru --num_layer 2 --hidden_size 512 --batch_size 64
+# python ./train_multitask_crf.py --init_weights normal --num_epoch 30 --dropout 0.4 --model_name gru --num_layer 2 --hidden_size 512 --batch_size 32 --crf

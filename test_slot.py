@@ -120,16 +120,14 @@ def parse_args() -> Namespace:
     )
 
         # init weights
-    parser.add_argument("--init_weights", type=str, help="choose the init weights method from \
-    [uniform, normal, xavier_uniform, xavier_normal, kaiming_uniform, kaiming_normal, orthogonal, identity]",
-    default='identity',
-    choices=["uniform", "normal", "xavier_uniform", "xavier_normal", "kaiming_uniform", "kaiming_normal", \
-    "orthogonal", "identity"]
-    )
+    parser.add_argument("--init_weights", type=str, help="choose the initial weights method from \
+    [normal, xavier_normal, kaiming_normal, orthogonal, identity]",
+    choices=['normal', 'xavier_normal', 'kaiming_normal', 'orthogonal', 'identity'],
+    default='identity')
 
     # which model
     parser.add_argument("--model_name", type=str, help="choose a model from [rnn, gru, lstm] to finish your task",
-                        default='gru', choices=['rnn', 'gru', 'lstm']) 
+                        default='rnn', choices=['rnn', 'gru', 'lstm']) 
 
     args = parser.parse_args()
     return args
@@ -138,8 +136,8 @@ if __name__ == "__main__":
     args = parse_args()
     if args.pred_file == Path('./pred/slot'):
         args.pred_file.mkdir(parents=True, exist_ok=True)
-        args.pred_file = args.pred_file / f"{args.batch_size}_{args.hidden_size}_pred.csv"
+        args.pred_file = args.pred_file / f"{args.model_name}_B{args.batch_size}_H{args.hidden_size}_pred.csv"
     main(args)
 
-# python ./test_slot.py --test_file ./data/slot/test.json  --ckpt_path ckpt/slot/best.pt  --pred_file ./pred/slot --hidden_size 256 --init_weights normal
+# python ./test_slot.py --test_file ./data/slot/test.json  --ckpt_path ckpt/slot/best.pt  --pred_file ./pred/slot --hidden_size 512 --init_weights normal
 # bash ./slot_tag.sh ./data/slot/test.json ./pred/slot 

@@ -5,7 +5,6 @@ import logging
 import torch
 import torch.nn as nn
 from torch.nn import Embedding
-from torchcrf import CRF
 
 class SeqClassifier(nn.Module):
     def __init__(
@@ -217,6 +216,7 @@ class MultitaskNet(SeqClassifier):
         )
 
         if crf :
+            from torchcrf import CRF
             self.crf = CRF(num_tags=num_class['slot'], batch_first=True)
         else:
             self.crf = None

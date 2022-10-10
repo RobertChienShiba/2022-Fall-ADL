@@ -1,4 +1,3 @@
-from ast import arg
 import json
 import pickle
 from argparse import ArgumentParser, Namespace
@@ -40,9 +39,14 @@ def predict(model: MultitaskNet,
             preds.extend(pred.cpu().detach().numpy().tolist())
         elif task == 'slot':
             mask = batch['mask'].to(device)
-            output = output.transpose(1, 2)
-            pred = model.crf.decode(output, mask)
-            preds.extend([pred[idx] for idx, text_mask in enumerate(mask)])
+            if model.crf:
+                output = output.transpose(1, 2)
+                pred = model.crf.decode(output, mask)
+                preds.extend(pred)
+            else:
+                pred = output.argmax(dim=1)
+                preds.extend([pred[idx].masked_select(text_mask).cpu().detach().numpy().tolist()  \
+                        for idx, text_mask in enumerate(mask)])
         else:
             raise NameError(f'YOU CHOOSE THE WRONG {task} !!! please choose one of ["intent", "slot"] task')
 
@@ -88,6 +92,7 @@ def main(args):
 
     # load weights into model
     checkpoint = torch.load(args.ckpt_path)
+    # logging.info(f'Use CRF: {checkpoint["crf"]}')
     model.load_state_dict(checkpoint['model_state_dict'])
 
     # TODO: predict dataset
@@ -131,7 +136,7 @@ def parse_args() -> Namespace:
         required=True
     )
 
-    parser.add_argument("--pred_file", type=Path, default="./pred/slot")
+    parser.add_argument("--pred_file", type=Path, default="./pred")
 
     # data
     parser.add_argument("--icf_max_len", type=int, default=28)
@@ -139,11 +144,11 @@ def parse_args() -> Namespace:
     parser.add_argument("--task_type", type=str, required=True, choices=["intent", "slot"])
 
     # model
-    parser.add_argument("--hidden_size", type=int, default=128)
+    parser.add_argument("--hidden_size", type=int, default=256)
     parser.add_argument("--num_layers", type=int, default=2)
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--bidirectional", type=bool, default=True)
-    parser.add_argument("--crf", type=bool, default=True)
+    parser.add_argument("--crf", action='store_true', default=False)
 
     # data loader
     parser.add_argument("--batch_size", type=int, default=128)
@@ -152,26 +157,28 @@ def parse_args() -> Namespace:
         "--device", type=torch.device, help="cpu, cuda, cuda:0, cuda:1", default="cuda:0"
     )
 
-        # init weights
-    parser.add_argument("--init_weights", type=str, help="choose the init weights method from \
-    [uniform, normal, xavier_uniform, xavier_normal, kaiming_uniform, kaiming_normal, orthogonal, identity]",
-    default='identity',
-    choices=["uniform", "normal", "xavier_uniform", "xavier_normal", "kaiming_uniform", "kaiming_normal", \
-    "orthogonal", "identity"]
-    )
+    # init weights
+    parser.add_argument("--init_weights", type=str, help="choose the initial weights method from \
+    [normal, xavier_normal, kaiming_normal, orthogonal, identity]",
+    choices=['normal', 'xavier_normal', 'kaiming_normal', 'orthogonal', 'identity'],
+    default='identity')
 
     # which model
     parser.add_argument("--model_name", type=str, help="choose a model from [rnn, gru, lstm] to finish your task",
-                        default='gru', choices=['rnn', 'gru', 'lstm']) 
+                        default='rnn', choices=['rnn', 'gru', 'lstm']) 
 
     args = parser.parse_args()
     return args
 
 if __name__ == "__main__":
     args = parse_args()
-    if args.pred_file == Path('./pred/slot'):
-        args.pred_file.mkdir(parents=True, exist_ok=True)
-        args.pred_file = args.pred_file / f'{args.crf}_{args.batch_size}_{args.hidden_size}_pred.csv'
+    if args.pred_file == Path('./pred'):
+        (args.pred_file / args.task_type).mkdir(parents=True, exist_ok=True)
+        args.pred_file = args.pred_file / args.task_type / f'{args.crf}_{args.batch_size}_{args.hidden_size}_pred.csv'
     main(args)
 
-# python ./test_multitask_crf.py --test_file ./data/slot/test.json --task_type slot --ckpt_path ./ckpt/slot/best.pt --num_layers 2 --batch_size 64 --hidden_size 512 --init_weights normal
+# python ./test_multitask_crf.py --test_file ./data/slot/test.json --task_type slot --ckpt_path ./ckpt/slot/best_False.pt --num_layers 2 --batch_size 64 --hidden_size 512 --init_weights normal --model_name gru
+# python ./test_multitask_crf.py --test_file ./data/intent/test.json --task_type intent --ckpt_path ./ckpt/intent/best_False.pt --num_layers 2 --batch_size 64 --hidden_size 512 --init_weights normal --model_name gru
+# python ./test_multitask_crf.py --test_file ./data/slot/test.json --task_type slot --ckpt_path ./ckpt/slot/best_True.pt --num_layers 2 --batch_size 32 --hidden_size 512 --init_weights normal --model_name gru --crf
+# python ./test_multitask_crf.py --test_file ./data/intent/test.json --task_type intent --ckpt_path ./ckpt/intent/best_True.pt --num_layers 2 --batch_size 32 --hidden_size 512 --init_weights normal --model_name gru --crf
+# bash ./slot_tag.sh ./data/slot/test.json ./pred
