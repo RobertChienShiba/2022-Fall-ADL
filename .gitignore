@@ -173,3 +173,5 @@ downloads.sh
 
 # python script
 nltk_install.py
+train_multitask.py
+test_multitask.py
