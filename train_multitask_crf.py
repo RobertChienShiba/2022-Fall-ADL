@@ -229,6 +229,7 @@ def main(args):
             data = json.loads(data_path.read_text()) 
             dataset = task_dataset(data, vocab[task], label2idx, max_len)
             if task == SLOT :
+                # Ensure INTENT and SLOT task will end at the same time in the training loop
                 args.batch_size = int(np.ceil(len(dataset) / len(loaders[INTENT][split])))
                 # For data argumentation and calculate different weights for loss function
                 for one in data :
@@ -253,8 +254,6 @@ def main(args):
         criterion = nn.NLLLoss(reduction='sum')
     else:
         criterion = nn.CrossEntropyLoss(reduction='sum')
-
-    # writer = SummaryWriter() 
 
     epoch_pbar = trange(args.num_epoch, desc="Epoch")
     intent_best_acc, slot_best_acc, early_stop_count = 0, 0, 0
@@ -321,8 +320,7 @@ def main(args):
         scheduler.step(intent_valid_loss + slot_valid_loss)
     
     # load weights into model
-    checkpoint = torch.load(args.ckpt_dir / SLOT / f'best_{args.crf}.pt')
-    logging.info(f'Use CRF: {checkpoint["crf"]}')
+    checkpoint = torch.load(args.ckpt_dir / SLOT / f'best_multitask.pt')
     model.load_state_dict(checkpoint['model_state_dict'])
 
     predictions, ground_truths = seqeval_eval(model, slot_valid_pbar, args.device)
@@ -345,8 +343,8 @@ def main(args):
 
         joint_acc += (prediction == ground_truth)
 
-        # y_true.extend(ground_truth)
-        # y_pred.extend(prediction)
+    #     y_true.extend(ground_truth)
+    #     y_pred.extend(prediction)
         
 
     # import seaborn as sns
@@ -356,15 +354,16 @@ def main(args):
     
     # matplotlib.use('TkAgg')
     
-    # cf_matrix = confusion_matrix(y_true, y_pred, labels=["I-date", "B-last_name", "B-first_name", "B-time",
-    #                             "B-date", "I-time", "O", "I-people", "B-people"])
+    # labels = ["I-date", "B-last_name", "B-first_name", "B-time", "B-date", "I-time", "O", "I-people", "B-people"]
+    
+    # cf_matrix = confusion_matrix(y_true, y_pred, labels=labels)
     # ax = sns.heatmap(cf_matrix, annot=True, cmap='Blues')
 
     # ax.set_xlabel('Predict')
     # ax.set_ylabel('Actual')
     
-    # ax.xaxis.set_ticklabels([i for i in range(9)])
-    # ax.yaxis.set_ticklabels([i for i in range(9)])
+    # ax.xaxis.set_ticklabels(labels, fontsize=5)
+    # ax.yaxis.set_ticklabels(labels, fontsize=5)
 
     # plt.show()
 

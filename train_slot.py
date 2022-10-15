@@ -235,15 +235,15 @@ def main(args):
 
         scheduler.step(valid_loss)
     
-    # load weights into model
-    checkpoint = torch.load(args.ckpt_dir / 'best.pt')
+    # load weights into models
+    checkpoint = torch.load(args.ckpt_dir / 'best_slot.pt')
     model.load_state_dict(checkpoint['model_state_dict'])
 
     predictions, ground_truths = seqeval_eval(model, valid_pbar, args.device)
     joint_acc = 0
 
     stats = defaultdict(list)
-    y_pred, y_true = [], []
+    # y_pred, y_true = [], []
     # cal joint acc
     for prediction, ground_truth in zip(predictions, ground_truths):
         # it will have the same length after mask
@@ -258,21 +258,26 @@ def main(args):
 
         joint_acc += (prediction == ground_truth)
 
-        # y_true.extend(ground_truth)
-        # y_pred.extend(prediction)
+    #     y_true.extend(ground_truth)
+    #     y_pred.extend(prediction)
 
     # import seaborn as sns
     # import matplotlib.pyplot as plt
+    # import matplotlib
     # from sklearn.metrics import confusion_matrix
     
-    # cf_matrix = confusion_matrix(y_true, y_pred)
+    # matplotlib.use('TkAgg')
+    
+    # labels = ["I-date", "B-last_name", "B-first_name", "B-time", "B-date", "I-time", "O", "I-people", "B-people"]
+    
+    # cf_matrix = confusion_matrix(y_true, y_pred, labels=labels)
     # ax = sns.heatmap(cf_matrix, annot=True, cmap='Blues')
 
     # ax.set_xlabel('Predict')
     # ax.set_ylabel('Actual')
-
-    # ax.xaxis.set_ticklabels([i for i in range(9)])
-    # ax.yaxis.set_ticklabels([i for i in range(9)])
+    
+    # ax.xaxis.set_ticklabels(labels, fontsize=5)
+    # ax.yaxis.set_ticklabels(labels, fontsize=5)
 
     # plt.show()
 
@@ -331,7 +336,7 @@ def parse_args() -> Namespace:
 
     # which model
     parser.add_argument("--model_name", type=str, help="choose a model from [rnn, gru, lstm] to finish your task",
-                        default='gru', choices=['rnn', 'gru', 'lstm']) 
+                        default='rnn', choices=['rnn', 'gru', 'lstm']) 
 
     # total of epochs to run
     parser.add_argument("--num_epoch", type=int, default=20)
@@ -353,4 +358,4 @@ if __name__ == "__main__":
 
 # python ./train_slot.py --init_weights normal --num_epoch 20 --dropout 0.4 --model_name gru --num_layer 2 
 # python ./train_slot.py --init_weights normal --num_epoch 40 --dropout 0.4 --model_name gru --num_layer 2 --hidden_size 256
-# python ./train_slot.py --init_weights normal --num_epoch 40 --dropout 0.4 --model_name gru --num_layer 2 --batch_size 32 --hidden_size 512
+# python ./train_slot.py --init_weights normal --num_epoch 40 --dropout 0.4 --model_name gru --num_layer 2 --batch_size 64 --hidden_size 512

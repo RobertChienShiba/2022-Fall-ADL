@@ -33,7 +33,8 @@ def train(model:SeqClassifier,
           criterion: torch.nn.CrossEntropyLoss,
           train_pbar: tqdm,
           device: torch.device,
-          vocab: Vocab):
+          vocab: Vocab,
+          data_argumentation: bool):
 
     model.train()
 
@@ -45,9 +46,11 @@ def train(model:SeqClassifier,
         data, label = batch['data'], batch['label'].to(device)
 
         # Data Argumentation (Replace random tokens by synonym)
-        argument_data = argument_tokens(data, vocab).to(device)
+        if data_argumentation:
+            data= argument_tokens(data, vocab)
 
-        output= model(argument_data)
+        data = data.to(device)
+        output= model(data)
         loss = criterion(output, label)
         loss.backward()
         nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -155,7 +158,7 @@ def main(args):
 
         # training
         logging.info(f' Epoch [{epoch+1}/{args.num_epoch}]')
-        train_loss, train_acc = train(model, optimizer, criterion, train_pbar, args.device, vocab)
+        train_loss, train_acc = train(model, optimizer, criterion, train_pbar, args.device, vocab, args.data_argumentation)
         logging.info(f'train_loss: {train_loss:.4f}, train_acc: {train_acc:.3f}')
        
         
@@ -251,6 +254,9 @@ def parse_args() -> Namespace:
     # choose weight decay rate
     parser.add_argument("--weight_decay", type=float, default=5e-3)
 
+    # whether use data argumentation
+    parser.add_argument("--data_argumentation", action='store_true', default=False)
+
     args = parser.parse_args()
     return args
 
@@ -260,5 +266,5 @@ if __name__ == "__main__":
     args.ckpt_dir.mkdir(parents=True, exist_ok=True)
     main(args)
 
-# python ./train_intent.py --init_weights normal --num_epoch 40 --dropout 0.4 --model_name gru --num_layers 2 --hidden_size 512
+# python ./train_intent.py --init_weights normal --num_epoch 40 --dropout 0.4 --model_name gru --num_layers 2 --hidden_size 512 --data_argumentation
 # python ./train_intent.py --init_weights normal --num_epoch 20 --dropout 0.4 --model_name gru --num_layers 2 --hidden_size 512
