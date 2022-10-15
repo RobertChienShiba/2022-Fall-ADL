@@ -92,7 +92,6 @@ def main(args):
 
     # load weights into model
     checkpoint = torch.load(args.ckpt_path)
-    # logging.info(f'Use CRF: {checkpoint["crf"]}')
     model.load_state_dict(checkpoint['model_state_dict'])
 
     # TODO: predict dataset

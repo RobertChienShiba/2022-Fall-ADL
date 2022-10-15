@@ -175,3 +175,6 @@ downloads.sh
 nltk_install.py
 train_multitask.py
 test_multitask.py
+
+requirements.txt
+

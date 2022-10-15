@@ -54,7 +54,7 @@ def train(model:SeqClassifier,
         optimizer.step()
         loss_record.append(loss.item())
 
-        #  # calculate acc
+        # calculate acc
         pred = output.argmax(dim=1)
         acc = (pred == label).sum().item() / len(data)
         acc_record.append(acc)
@@ -97,7 +97,6 @@ def validate(model:SeqClassifier,
     mean_valid_acc = np.mean(acc_record)
 
     return mean_valid_loss, mean_valid_acc
-
 
 
 def main(args):

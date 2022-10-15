@@ -119,7 +119,7 @@ def parse_args() -> Namespace:
         "--device", type=torch.device, help="cpu, cuda, cuda:0, cuda:1", default="cuda:0"
     )
 
-        # init weights
+    # init weights
     parser.add_argument("--init_weights", type=str, help="choose the initial weights method from \
     [normal, xavier_normal, kaiming_normal, orthogonal, identity]",
     choices=['normal', 'xavier_normal', 'kaiming_normal', 'orthogonal', 'identity'],
@@ -139,5 +139,5 @@ if __name__ == "__main__":
         args.pred_file = args.pred_file / f"{args.model_name}_B{args.batch_size}_H{args.hidden_size}_pred.csv"
     main(args)
 
-# python ./test_slot.py --test_file ./data/slot/test.json  --ckpt_path ckpt/slot/best.pt  --pred_file ./pred/slot --hidden_size 512 --init_weights normal
+# python ./test_slot.py --test_file ./data/slot/test.json  --ckpt_path ckpt/slot/best.pt  --pred_file ./pred/slot --hidden_size 512 --init_weights normal --model_name gru
 # bash ./slot_tag.sh ./data/slot/test.json ./pred/slot 

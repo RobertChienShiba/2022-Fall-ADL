@@ -1,4 +1,3 @@
-from multiprocessing import reduction
 from typing import Dict
 import logging
 
@@ -106,9 +105,9 @@ class SeqClassifier(nn.Module):
         # x -> (Batch, Seq_len)
         embeddings = self.embed(x)
         logging.debug(f'embeddings shape = {embeddings.shape}')
-        # embed -> (Seq_len, Batch, embed_dim)
+        # embed -> (Batch, Seq_len, embed_dim)
         if isinstance(self.model, nn.LSTM):
-            output, (h_n, _) = self.model(embeddings)
+            output, (h_n, _)= self.model(embeddings)
         else:
             output, h_n = self.model(embeddings)
         # out -> (Batch, Seq_len, D*hidden_size)
@@ -166,8 +165,6 @@ class SeqTagger(SeqClassifier):
         # h_n -> (D*num_layer, Batch, hidden)
         logging.debug(f'output shape = {output.shape}')
         logging.debug(f'hidden shape = {h_n.shape}')
-        # output_feature -> (Batch, hidden*2)
-        logging.debug(f'output feature shape = {output.shape}')
         logits = self.classifier(output)
         # logits -> (Batch, Seq_len, num_class)
         logging.debug(f'logits size = {logits.shape}')

@@ -2,12 +2,11 @@ from typing import Iterable, List, Dict
 import random
 import torch
 import numpy as np
-import os
 
-import nltk
+# import nltk
 
-nltk.download('wordnet')
-nltk.download('omw-1.4')
+# nltk.download('wordnet')
+# nltk.download('omw-1.4')
 
 
 from nltk.corpus import wordnet
