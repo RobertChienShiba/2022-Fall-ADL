@@ -38,4 +38,4 @@ python3.9 train_multitask_crf.py --init_weights normal --num_epoch 40 --dropout 
 In `train_multitask_crf.py` we do not use `CRF` layer behind the BiLSTM because it does not improve our performance in my test.
 
 After training slot model you will see a classification report for your validation set produced by python `seqeval` library
-![](https//i.imgur.com/qLSl8qP.png)
+![](https://i.imgur.com/qLSl8qP.png)
