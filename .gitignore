@@ -176,4 +176,4 @@ nltk_install.py
 train_multitask.py
 test_multitask.py
 
-requirement.in
+requirements.in
