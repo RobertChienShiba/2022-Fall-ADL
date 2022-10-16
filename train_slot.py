@@ -243,7 +243,6 @@ def main(args):
     joint_acc = 0
 
     stats = defaultdict(list)
-    # y_pred, y_true = [], []
     # cal joint acc
     for prediction, ground_truth in zip(predictions, ground_truths):
         # it will have the same length after mask
@@ -257,29 +256,6 @@ def main(args):
             ground_truth[idx] = idx2tag[ground_truth[idx]]
 
         joint_acc += (prediction == ground_truth)
-
-    #     y_true.extend(ground_truth)
-    #     y_pred.extend(prediction)
-
-    # import seaborn as sns
-    # import matplotlib.pyplot as plt
-    # import matplotlib
-    # from sklearn.metrics import confusion_matrix
-    
-    # matplotlib.use('TkAgg')
-    
-    # labels = ["I-date", "B-last_name", "B-first_name", "B-time", "B-date", "I-time", "O", "I-people", "B-people"]
-    
-    # cf_matrix = confusion_matrix(y_true, y_pred, labels=labels)
-    # ax = sns.heatmap(cf_matrix, annot=True, cmap='Blues')
-
-    # ax.set_xlabel('Predict')
-    # ax.set_ylabel('Actual')
-    
-    # ax.xaxis.set_ticklabels(labels, fontsize=5)
-    # ax.yaxis.set_ticklabels(labels, fontsize=5)
-
-    # plt.show()
 
     print({idx2tag[k] : np.mean(v) for k, v in dict(stats).items()})
     # print({k : len(v) for k, v in dict(stats).items()})
@@ -356,6 +332,5 @@ if __name__ == "__main__":
     args.ckpt_dir.mkdir(parents=True, exist_ok=True)
     main(args)
 
-# python ./train_slot.py --init_weights normal --num_epoch 20 --dropout 0.4 --model_name gru --num_layer 2 
-# python ./train_slot.py --init_weights normal --num_epoch 40 --dropout 0.4 --model_name gru --num_layer 2 --hidden_size 256
+# python ./train_slot.py --init_weights normal --num_epoch 20 --dropout 0.4 --model_name gru --num_layer 2 --hidden_size 512
 # python ./train_slot.py --init_weights normal --num_epoch 40 --dropout 0.4 --model_name gru --num_layer 2 --batch_size 64 --hidden_size 512

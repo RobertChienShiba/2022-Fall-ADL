@@ -33,7 +33,7 @@ python3.9 train_intent.py --init_weights normal --num_epoch 40 --dropout 0.4 --m
 
 # best slot model train with multitask learning and increase epoch to 40 
 # Performance on Kaggle improve from 0.789 to 0.826.
-python3.9 train_multitask_crf.py --init_weights normal --num_epoch 40 --dropout 0.4 --model_name gru --num_layer 2 --hidden_size 512 --batch_size 64 --max_len 35
+python3.9 train_multitask_crf.py --init_weights normal --num_epoch 40 --dropout 0.4 --model_name gru --num_layer 2 --hidden_size 512 --batch_size 64 --slt_max_len 35
 ```
 In `train_multitask_crf.py` we do not use `CRF` layer behind the BiLSTM because it does not improve our performance in my test.
 

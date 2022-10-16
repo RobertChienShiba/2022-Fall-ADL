@@ -139,5 +139,5 @@ if __name__ == "__main__":
         args.pred_file = args.pred_file / f"{args.model_name}_B{args.batch_size}_H{args.hidden_size}_pred.csv"
     main(args)
 
-# python ./test_slot.py --test_file ./data/slot/test.json  --ckpt_path ckpt/slot/best.pt  --pred_file ./pred/slot --hidden_size 512 --init_weights normal --model_name gru
+# python ./test_slot.py --test_file ./data/slot/test.json  --ckpt_path ckpt/slot/best_slot.pt  --pred_file ./pred/slot --hidden_size 512 --init_weights normal --model_name gru
 # bash ./slot_tag.sh ./data/slot/test.json ./pred/slot 

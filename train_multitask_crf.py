@@ -327,7 +327,6 @@ def main(args):
     joint_acc = 0
 
     stats = defaultdict(list)
-    # y_pred, y_true = [], []
 
     # cal joint acc
     for prediction, ground_truth in zip(predictions, ground_truths):
@@ -342,30 +341,6 @@ def main(args):
             ground_truth[idx] = idx2label[SLOT][ground_truth[idx]]
 
         joint_acc += (prediction == ground_truth)
-
-    #     y_true.extend(ground_truth)
-    #     y_pred.extend(prediction)
-        
-
-    # import seaborn as sns
-    # import matplotlib.pyplot as plt
-    # import matplotlib
-    # from sklearn.metrics import confusion_matrix
-    
-    # matplotlib.use('TkAgg')
-    
-    # labels = ["I-date", "B-last_name", "B-first_name", "B-time", "B-date", "I-time", "O", "I-people", "B-people"]
-    
-    # cf_matrix = confusion_matrix(y_true, y_pred, labels=labels)
-    # ax = sns.heatmap(cf_matrix, annot=True, cmap='Blues')
-
-    # ax.set_xlabel('Predict')
-    # ax.set_ylabel('Actual')
-    
-    # ax.xaxis.set_ticklabels(labels, fontsize=5)
-    # ax.yaxis.set_ticklabels(labels, fontsize=5)
-
-    # plt.show()
 
     print({idx2label[SLOT][k] : np.mean(v) for k, v in dict(stats).items()})
     # print({k : len(v) for k, v in dict(stats).items()})
