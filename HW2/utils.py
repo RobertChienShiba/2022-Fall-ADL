@@ -20,6 +20,7 @@ def postprocess_qa_predictions(
     features_per_example: Dict[str, List[int]],
     n_best_size: int = 20,
     log_level: Optional[int] = logging.INFO,
+    answer_max_len = 30
 ):
     """
     Post-processes the predictions of a question-answering model to convert them to answers that are substrings of the
@@ -37,13 +38,6 @@ def postprocess_qa_predictions(
         log_level (:obj:`int`, `optional`, defaults to ``logging.INFO``):
             ``logging`` log level (e.g., ``logging.WARNING``)
     """
-    if len(predictions) != 2:
-        raise ValueError("`predictions` should be a tuple with two elements (start_logits, end_logits).")
-    all_start_logits, all_end_logits = predictions
-
-    if len(predictions[0]) != len(features):
-        raise ValueError(f"Got {len(predictions[0])} predictions and {len(features)} features.")
-
     # Build a map example to its corresponding features.
     # example_id_to_index = {k: i for i, k in enumerate(examples["id"])}
     # features_per_example = collections.defaultdict(list)
@@ -52,6 +46,7 @@ def postprocess_qa_predictions(
 
     # The dictionaries we have to fill.
     all_predictions = collections.OrderedDict()
+    all_start_logits, all_end_logits = predictions
 
     # Logging.
     logger.setLevel(log_level)
@@ -60,8 +55,12 @@ def postprocess_qa_predictions(
     # Let's loop over all the examples!
     for example in tqdm(examples):
         # Those are the indices of the features associated to the current example.
-        # Type: Dict[str, List[int]]
-        feature_indices = features_per_example[example]
+        example_id = example["id"]
+        # NOTE TEST
+        # feature_indices = features_per_example[example_id]
+        feature_indices = features_per_example.get(example_id, None)
+        if feature_indices is None:
+            continue
 
         prelim_predictions = []
 
@@ -91,7 +90,7 @@ def postprocess_qa_predictions(
                     ):
                         continue
                     # Don't consider answers with a length that is either < 0 or > max_answer_length.
-                    if end_index < start_index:
+                    if end_index < start_index or (end_index - start_index + 1) > answer_max_len :
                         continue
 
                     prelim_predictions.append(
@@ -104,16 +103,21 @@ def postprocess_qa_predictions(
 
         # Only keep the best `n_best_size` predictions.
         predictions = sorted(prelim_predictions, key=lambda x: x["score"], reverse=True)[:n_best_size]
-
-        # Use the offsets to gather the answer text in the original context.
         context = example["context"]
+        # Use the offsets to gather the answer text in the original context
         for pred in predictions:
             pred["text"] = context[pred["start"] : pred["end"]]
-
-        # RAISE ERROR IF SOME EXAMPLE HAVE A NULL ANSWER
+        # IF SOME EXAMPLE HAVE A NULL ANSWER
         if len(predictions) == 0 or (len(predictions) == 1 and predictions[0]["text"] == ""):
             logger.error(f"example id : {example['id']} have a null answer")
-            raise KeyboardInterrupt ("the null answer is not possible.")
+            predictions.append(
+                {   
+                    "score": 0,
+                    "start": 0,
+                    "end": 0,
+                    "text": "",
+                }
+            )
 
         # Compute the softmax of all scores.
         scores = np.array([pred["score"] for pred in predictions])
@@ -139,7 +143,7 @@ def post_processing_function(examples, features, predictions, example_to_feature
         features_per_example=example_to_features,
         n_best_size=n_best_size,
     )
-    formatted_predictions = [{"id": k, "prediction_text": v['text']} for k, v in predictions.items()]
+    formatted_predictions = [{"id": k, "answer": v['text']} for k, v in predictions.items()]
 
     if 'answers' in examples.column_names:
         references = [{"id": ex["id"], "answers": ex['answers']} for ex in examples]
@@ -180,27 +184,10 @@ def create_and_fill_np_array(start_or_end_logits, dataset, max_len):
 
     return logits_concat
 
-# remove punctuation
-def remove_punctuation(in_str):
-    in_str = str(in_str).lower().strip()
-    sp_char = ['-',':','_','*','^','/','\\','~','`','+','=',
-               '，','。','：','？','！','“','”','；','’','《','》','……','·','、',
-               '「','」','（','）','－','～','『','』']
-    out_segs = []
-    for char in in_str:
-        if char in sp_char:
-            continue
-        else:
-            out_segs.append(char)
-    return ''.join(out_segs)
-
 def calc_em_score(answers, prediction):
     em = 0
-    assert len(answers) == 1 and prediction != ""
     for ans in answers:
-        ans_ = remove_punctuation(ans)
-        prediction_ = remove_punctuation(prediction)
-        if ans_ == prediction_:
+        if ans == prediction:
             em = 1
             break
     return em
@@ -209,7 +196,7 @@ def evaluate(predictions, references):
     em = 0
     total_count = 0
     skip_count = 0
-    pred = dict([(data['id'], data['prediction_text']) for data in predictions])
+    pred = dict([(data['id'], data['answer']) for data in predictions])
     ref = dict([(data['id'], data['answers']['text']) for data in references])
     for query_id, answers in ref.items():
         total_count += 1
@@ -218,8 +205,8 @@ def evaluate(predictions, references):
             continue
         prediction = pred[query_id]
         em += calc_em_score(answers, prediction)
-    em_score = 100.0 * em / total_count
-    assert skip_count == 0
+    em_score = em / total_count
+    # assert skip_count == 0
     return {
         'em': em_score, 
         'total': total_count, 
@@ -233,83 +220,4 @@ def mask_tokens(origin_input, paragraph_indices, mask_id, mask_prob=0.15):
     mask_input[mask_indices] = mask_id
     return mask_input
 
-    
-# import pandas as pd
-# import json
-# import datasets
-# from pprint import pprint
-
-# import torch
-# #显示所有列
-# pd.set_option('display.max_columns', None)
-# #显示所有行
-# # pd.set_option('display.max_rows', None)
-# #设置value的显示长度为100，默认为50
-# # pd.set_option('max_colwidth',100)
-# def mtpch_HF_format(ori_json: str, HF_json: str) -> None:
-#     with open('./data/context.json', 'r', encoding='utf-8') as file:
-#         context = json.load(file)
-
-#     df = pd.read_json(ori_json, orient='records')
-
-#     if 'relevant' in df.columns:
-#         df[['paragraphs_0', 'paragraphs_1', 'paragraphs_2', 'paragraphs_3', 'label']] = df.apply(
-#             lambda df, contexts: (contexts[df['paragraphs'][0]], contexts[df['paragraphs'][1]], 
-#             contexts[df['paragraphs'][2]], contexts[df['paragraphs'][3]], df['paragraphs'].index(df['relevant'])), args=(context,),
-#             axis=1, result_type='expand')
-#         df[['id', 'question', 'paragraphs_0', 'paragraphs_1', 'paragraphs_2', 'paragraphs_3', 'label']].to_json(HF_json, 
-#             orient='records', indent=4, force_ascii=False)
-#     else:
-#         df[['paragraphs_0', 'paragraphs_1', 'paragraphs_2', 'paragraphs_3']] = df.apply(
-#             lambda df, contexts: (contexts[df['paragraphs'][0]], contexts[df['paragraphs'][1]], 
-#             contexts[df['paragraphs'][2]], contexts[df['paragraphs'][3]]), args=(context,),
-#             axis=1, result_type='expand')
-#         df[['id', 'question', 'paragraphs_0', 'paragraphs_1', 'paragraphs_2', 'paragraphs_3']].to_json(HF_json,
-#             orient='records', indent=4, force_ascii=False)
-
-#     print(df.head())
-
-# def qa_HF_format(ori_json: str, HF_json: str) -> None:
-#     with open('./data/context.json', 'r', encoding='utf-8') as file:
-#         context = json.load(file)
-
-#     df = pd.read_json(ori_json, orient='records')
-
-#     if 'answer' in df.columns:
-#         df[['context', 'answers']] = df.apply(
-#             lambda df, context: (context[df['relevant']], {k: [v] for k, v in df['answer'].items()}), args=(context,),
-#             axis=1, result_type='expand')
-#         df[['id', 'question', 'context', 'answers']].to_json(HF_json, 
-#             orient='records', indent=4, force_ascii=False)
-#     else:
-#         df['context'] = df['relevant'].apply(
-#             lambda s, context: context[s], args=(context,))
-#         df[['id', 'question', 'context']].to_json(HF_json, 
-#             orient='records', indent=4, force_ascii=False)
-
-#     print(df.head())
-
-# def mask_tokens(origin_input, paragraph_indices, mask_id, mask_prob=0.15):
-#     mask_input = origin_input.clone()
-#     mask_indices = torch.bernoulli(torch.full(origin_input.shape, mask_prob)).bool()
-
-#     mask_indices = mask_indices & paragraph_indices
-#     mask_input[mask_indices] = mask_id
-#     return mask_input
-
-# if __name__ == '__main__':
-#     mtpch_HF_format('./data/train.json', './data/train_mtpch.json')
-#     mtpch_HF_format('./data/valid.json', './data/valid_mtpch.json')
-
-#     qa_HF_format('./data/train.json', './data/train_qa.json')
-#     qa_HF_format('./data/valid.json', './data/valid_qa.json')
-
-#     mtpch_HFdataset = datasets.load_dataset('json', data_files={'train':'./data/train_mtpch.json', 'validation':'./data/valid_mtpch.json'})
-#     mtpch_HFdataset = mtpch_HFdataset.class_encode_column('label')
-#     pprint(mtpch_HFdataset['train'].features)
-#     pprint(mtpch_HFdataset['train'][0])
-
-#     qa_HFdataset = datasets.load_dataset('json', data_files={'train':'./data/train_qa.json', 'validation':'./data/valid_qa.json'})
-#     pprint(qa_HFdataset['train'].features)
-#     pprint(qa_HFdataset['train'][0])
 

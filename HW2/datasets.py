@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 
 import torch
 import pandas as pd
+import numpy as np 
 
 from datasets import load_dataset
 from transformers import BertTokenizerFast
@@ -25,14 +26,13 @@ class DataCollatorForMultipleChoice:
             for k, v in feature.items():
                 batch[k].append(v)
         batch = dict(map(lambda x: (x[0], torch.tensor(x[1]))if x[0] != 'ids' else (x[0], x[1]), dict(batch).items()))
-        
+
         special_tokens_mask = batch.pop('special_tokens_mask')
         if self.is_train:
             batch['input_ids'] = mask_tokens(batch['input_ids'],
                 paragraph_indices=(batch['token_type_ids'] &
                                     ~special_tokens_mask).bool(),
                 mask_id=self.tokenizer.mask_token_id, mask_prob=0.15)
-
         return batch
 
 class DataCollatorForQA:
@@ -41,7 +41,6 @@ class DataCollatorForQA:
         for feature in features:
             for k, v in feature.items():
                 batch[k].append(v)
-        print(list(map(type, dict(batch).values())))
         batch = dict(map(lambda x: (x[0], torch.tensor(x[1]))if x[0] not in ['example_id', 'offset_mapping'] else (x[0], x[1]), dict(batch).items()))
         return batch
 
@@ -59,20 +58,20 @@ class BaseDataset(ABC):
         self.tokenizer = tokenizer
         self.is_train = is_train
         if self.is_train:
-            self.create_HFjson(context_path, kwargs['train_path'], kwargs['trainHF_path'])
-            self.create_HFjson(context_path, kwargs['validation_path'], kwargs['validationHF_path'])
-            self.train_dataset, self.eval_dataset = self.HF_format(dict(train=kwargs['trainHF_path'], 
+            self.convert_HFdata(context_path, kwargs['train_path'], kwargs['trainHF_path'])
+            self.convert_HFdata(context_path, kwargs['validation_path'], kwargs['validationHF_path'])
+            self.train_dataset, self.eval_dataset = self.preprocess(dict(train=kwargs['trainHF_path'], 
                     validation=kwargs['validationHF_path']))
         else:
-            self.create_HFjson(context_path, kwargs['test_path'], kwargs['testHF_path'])
-            self.test_dataset = self.HF_format(dict(test=kwargs['testHF_path']))
+            self.convert_HFdata(context_path, kwargs['test_path'], kwargs['testHF_path'])
+            self.test_dataset = self.preprocess(dict(test=kwargs['testHF_path']))
 
     @abstractmethod
-    def create_HFjson(self):
+    def convert_HFdata(self):
         pass
     
     @abstractmethod
-    def HF_format(self):
+    def preprocess(self):
         pass
 
 class MultipleChoiceDataset(BaseDataset):
@@ -87,7 +86,7 @@ class MultipleChoiceDataset(BaseDataset):
         super(MultipleChoiceDataset, self).__init__(context_path, 
                     paddings, max_length, tokenizer, is_train, **kwargs)
 
-    def preprocess_function(self, examples):
+    def prepare_feature(self, examples):
         ending_names = ["paragraphs_0", "paragraphs_1", "paragraphs_2", "paragraphs_3"]
         context_name = "question"
         label_column_name = "label"
@@ -118,7 +117,10 @@ class MultipleChoiceDataset(BaseDataset):
           tokenized_inputs["ids"] = examples["id"]
         return tokenized_inputs
 
-    def create_HFjson(self, context_path: str, ori_json: str, HF_json: str) -> None:
+    def convert_HFdata(self, context_path: str, ori_json: str, HF_json: str) -> None:
+        """
+        convert to HuggingFace SWAG dataset format
+        """
         with open(context_path, 'r', encoding='utf-8') as file:
             context = json.load(file)
 
@@ -139,15 +141,14 @@ class MultipleChoiceDataset(BaseDataset):
             df[['id', 'question', 'paragraphs_0', 'paragraphs_1', 'paragraphs_2', 'paragraphs_3']].to_json(HF_json,
                 orient='records', indent=4, force_ascii=False)
         
-        # print(df.head())
 
-    def HF_format(self, data_files: Dict):
+    def preprocess(self, data_files: Dict):
         raw_datasets = load_dataset('json', data_files=data_files)
         if self.is_train:
             raw_datasets = raw_datasets.class_encode_column('label')
 
             processed_datasets = raw_datasets.map(
-                self.preprocess_function, batched=True, remove_columns=raw_datasets["train"].column_names
+                self.prepare_feature, batched=True, remove_columns=raw_datasets["train"].column_names
             )
 
             train_dataset = processed_datasets["train"]
@@ -155,7 +156,7 @@ class MultipleChoiceDataset(BaseDataset):
             return train_dataset, eval_dataset
         else:
             processed_datasets = raw_datasets.map(
-                self.preprocess_function, batched=True, remove_columns=raw_datasets["test"].column_names
+                self.prepare_feature, batched=True, remove_columns=raw_datasets["test"].column_names
             )
 
             test_dataset = processed_datasets["test"]
@@ -171,9 +172,9 @@ class QADataset(BaseDataset):
         doc_stride: int,
         **kwargs
         ) -> None:
+        self.doc_stride = doc_stride
         super(QADataset, self).__init__(context_path, 
                 paddings, max_length, tokenizer, is_train, **kwargs)
-        self.doc_stride = doc_stride
 
     def prepare_train_features(self, examples):
         question_column_name = "question" 
@@ -211,25 +212,29 @@ class QADataset(BaseDataset):
         # Let's label those examples!
         tokenized_examples["start_positions"] = []
         tokenized_examples["end_positions"] = []
+        tokenized_examples['cls_index'] = []
+        tokenized_examples['overflow_to_sample_mapping'] = []
 
         for i, offsets in enumerate(offset_mapping):
             # We will label impossible answers with the index of the CLS token.
             input_ids = tokenized_examples["input_ids"][i]
             cls_index = input_ids.index(self.tokenizer.cls_token_id)
+            tokenized_examples['cls_index'].append(cls_index)
 
             # Grab the sequence corresponding to that example (to know what is the context and what is the question).
             sequence_ids = tokenized_examples.sequence_ids(i)
 
             # One example can give several spans, this is the index of the example containing this span of text.
             sample_index = sample_mapping[i]
+            tokenized_examples['overflow_to_sample_mapping'].append(sample_index)
             answers = examples[answer_column_name][sample_index]
             # If no answers are given, set the cls_index as answer.
-            if len(answers["answer_start"]) == 0:
+            if len(answers["start"]) == 0:
                 tokenized_examples["start_positions"].append(cls_index)
                 tokenized_examples["end_positions"].append(cls_index)
             else:
                 # Start/end character index of the answer in the text.
-                start_char = answers["answer_start"][0]
+                start_char = answers["start"][0]
                 end_char = start_char + len(answers["text"][0])
 
                 # Start token index of the current span in the text.
@@ -290,6 +295,7 @@ class QADataset(BaseDataset):
         # For evaluation, we will need to convert our predictions to substrings of the context, so we keep the
         # corresponding example_id and we will store the offset mappings.
         tokenized_examples["example_id"] = []
+        tokenized_examples['overflow_to_sample_mapping'] = []
 
         for i in range(len(tokenized_examples["input_ids"])):
             # Grab the sequence corresponding to that example (to know what is the context and what is the question).
@@ -298,6 +304,7 @@ class QADataset(BaseDataset):
 
             # One example can give several spans, this is the index of the example containing this span of text.
             sample_index = sample_mapping[i]
+            tokenized_examples['overflow_to_sample_mapping'].append(sample_index)
             tokenized_examples["example_id"].append(examples["id"][sample_index])
 
             # Set to None the offset_mapping that are not part of the context so it's easy to determine if a token
@@ -309,7 +316,10 @@ class QADataset(BaseDataset):
 
         return tokenized_examples
 
-    def create_HFjson(self, context_path: str, ori_json: str, HF_json: str) -> None:
+    def convert_HFdata(self, context_path: str, ori_json: str, HF_json: str) -> None:
+        """
+        convert to HuggingFace SQUAD dataset format
+        """
         with open(context_path, 'r', encoding='utf-8') as file:
             context = json.load(file)
 
@@ -323,14 +333,14 @@ class QADataset(BaseDataset):
                 orient='records', indent=4, force_ascii=False)
         else:
             df['context'] = df['relevant'].apply(
-                lambda s, context: context[s], args=(context,))
+                lambda s, context: context[int(s)] , args=(context,))
             df[['id', 'question', 'context']].to_json(HF_json, 
                 orient='records', indent=4, force_ascii=False)
 
         # print(df.head())
 
-    def HF_format(self, data_files: Dict):
-        raw_datasets = load_dataset('json', data_files=data_files, field='data')
+    def preprocess(self, data_files: Dict):
+        raw_datasets = load_dataset('json', data_files=data_files)
         if self.is_train:
             train_dataset = raw_datasets["train"]
             train_dataset = train_dataset.map(
@@ -339,14 +349,21 @@ class QADataset(BaseDataset):
             )
 
             eval_example = raw_datasets["validation"]
-            eval_dataset = eval_example.map(
-                self.prepare_train_features, batched=True,
+            train_feature = eval_example.map(
+                self.prepare_train_features, batched=True, remove_columns=raw_datasets["validation"].column_names,
                 desc="Running tokenizer on validation dataset"
             )
-            eval_dataset = eval_dataset.map(
+            valid_feature = eval_example.map(
                 self.prepare_validation_features, batched=True, remove_columns=raw_datasets["validation"].column_names,
                 desc="Running tokenizer on validation dataset"
             )
+            for column in valid_feature.column_names:
+                if column not in train_feature.column_names:
+                    assert len(valid_feature[column]) == torch.tensor(train_feature["input_ids"]).shape[0]
+                    train_feature = train_feature.add_column(column, valid_feature[column])
+                else:
+                    assert torch.tensor(train_feature[column]).shape == torch.tensor(valid_feature[column]).shape
+            eval_dataset = train_feature
             return train_dataset, dict(preprocessed=eval_dataset, non_preprocessed=eval_example)
         else:
             test_example = raw_datasets['test']

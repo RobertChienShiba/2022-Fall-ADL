@@ -49,7 +49,7 @@ from transformers import (
     get_scheduler,
 )
 
-from HFdataset_format import MultipleChoiceDataset, DataCollatorForMultipleChoice
+from datasets import MultipleChoiceDataset, DataCollatorForMultipleChoice
 
 logger = get_logger(__name__)
 # You should update this to your particular problem to have better documentation of `model_type`
@@ -85,7 +85,7 @@ def main(args):
         args.model_dir,
         config=config,
     )
-
+    
     model.resize_token_embeddings(len(tokenizer))
 
     # Preprocessing the datasets.
@@ -96,28 +96,17 @@ def main(args):
     # DataLoaders creation:
 
     train_dataloader = DataLoader(
-        dataset.train_dataset.select(range(100)), shuffle=True, batch_size=args.per_device_train_batch_size,
+        dataset.train_dataset, shuffle=True, batch_size=args.per_device_train_batch_size,
         collate_fn=DataCollatorForMultipleChoice(is_train=True, tokenizer=tokenizer)
     )
     eval_dataloader = DataLoader(
-        dataset.eval_dataset.select(range(100)),  batch_size=args.per_device_eval_batch_size,
+        dataset.eval_dataset,  batch_size=args.per_device_eval_batch_size,
         collate_fn=DataCollatorForMultipleChoice(is_train=False, tokenizer=tokenizer)
     )
 
     # Optimizer
     # Split weights in two groups, one with weight decay and the other not.
-    no_decay = ["bias", "LayerNorm.weight"]
-    optimizer_grouped_parameters = [
-        {
-            "params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
-            "weight_decay": args.weight_decay,
-        },
-        {
-            "params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)],
-            "weight_decay": 0.0,
-        },
-    ]
-    optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=args.learning_rate)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
 
     # Use the device given by the `accelerator` object.
     device = accelerator.device
@@ -133,7 +122,7 @@ def main(args):
     lr_scheduler = get_scheduler(
         name=args.lr_scheduler_type,
         optimizer=optimizer,
-        num_warmup_steps=args.num_warmup_steps * args.gradient_accumulation_steps,
+        num_warmup_steps=args.max_train_steps * args.gradient_accumulation_steps * 0.1,
         num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
     )
 
@@ -148,9 +137,6 @@ def main(args):
         args.max_train_steps = args.num_epochs * num_update_steps_per_epoch
     # Afterwards we recalculate our number of training epochs
     args.num_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
-
-    # Metrics
-    # metric = evaluate.load("accuracy")
 
     # Create output directory
     output_dir = args.ckpt_dir / 'MultipleChoice'
@@ -187,7 +173,7 @@ def main(args):
                 # save your best model
                 accelerator.wait_for_everyone()
                 model = accelerator.unwrap_model(model)
-                save_name = (args.model_dir).split('/')[-1] + f'_E{epoch+1}_{val_acc:.3f}'
+                save_name = (args.model_dir).split('/')[-1] + f'_{val_acc:.3f}'
                 model.save_pretrained(output_dir / save_name, is_main_process=accelerator.is_main_process,
                     save_function=accelerator.save)
                 tokenizer.save_pretrained(output_dir / save_name)
@@ -205,7 +191,6 @@ def validate(model, dataloader):
     # Evaluation loop - calculate accuracy and save model weights
     for batch in valid_pbar:
         labels = batch['labels']
-        logger.info(labels)
         outputs = model(**batch)
         loss = outputs.loss
         val_loss += loss.detach().float()
@@ -228,7 +213,6 @@ def train(model, optimizer, dataloader, lr_scheduler):
     for batch in train_pbar:
         with accelerator.accumulate(model):
             labels = batch['labels']
-            logger.info(labels)
             outputs = model(**batch)
             loss = outputs.loss
             train_loss += loss.detach().float()
@@ -269,15 +253,13 @@ def parse_args():
     parser.add_argument(
         "--pad_to_max_length",
         action="store_true",
-        # default=True,
         help="If passed, pad all samples to `max_length`. Otherwise, dynamic padding is used.",
     )
     parser.add_argument(
         "--model_dir",
         type=str,
-        default="./model/mengzi-bert-base",
         help="Path to pretrained model or model identifier from huggingface.co/models.",
-        required=False,
+        required=True,
     )
     parser.add_argument(
         "--per_device_train_batch_size",
@@ -308,7 +290,7 @@ def parse_args():
     parser.add_argument(
         "--gradient_accumulation_steps",
         type=int,
-        default=32,
+        default=16,
         help="Number of updates steps to accumulate before performing a backward/update pass.",
     )
     parser.add_argument(
@@ -318,11 +300,8 @@ def parse_args():
         help="The scheduler type to use.",
         choices=["linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup"],
     )
-    parser.add_argument(
-        "--num_warmup_steps", type=int, default=0, help="Number of steps for the warmup in the lr scheduler."
-    )
     parser.add_argument("--ckpt_dir", type=Path, default="./ckpt", help="Where to store the final model.")
-    parser.add_argument("--seed", type=int, default=1234, help="A seed for reproducible training.")
+    parser.add_argument("--seed", type=int, default=12345, help="A seed for reproducible training.")
 
     args = parser.parse_args()
 

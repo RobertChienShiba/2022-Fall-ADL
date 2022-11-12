@@ -48,7 +48,7 @@ from transformers import (
 )
 
 from utils import post_processing_function, create_and_fill_np_array
-from HFdataset_format import QADataset, DataCollatorForQA
+from datasets import QADataset, DataCollatorForQA
 
 logger = get_logger(__name__)
 # You should update this to your particular problem to have better documentation of `model_type`
@@ -97,8 +97,7 @@ def main(args):
     data_collator = DataCollatorForQA()
 
     test_dataloader = DataLoader(
-        dataset.test_dataset['preprocessed'], shuffle=False, batch_size=args.per_device_test_batch_size,
-        collate_fn=data_collator
+        dataset.test_dataset['preprocessed'], collate_fn=data_collator, batch_size=args.per_device_test_batch_size
     )
 
     # Prepare everything with our `accelerator`.
@@ -111,15 +110,15 @@ def main(args):
     predictions = test(model, test_dataloader, dataset)
 
     pred_df = pd.DataFrame(predictions)
-    print(pred_df)
-    # pred_df.to_csv(args.output_path, index=False, encoding='utf-8')
+    # print(pred_df)
+    pred_df.to_csv(args.output_path, index=False, encoding='utf-8')
 
 @torch.no_grad()
 def test(model, dataloader, dataset):
     all_example_ids = []
     all_offset_mapping = []
     for batch_data in dataloader:
-        all_example_ids += batch_data['example_ids']
+        all_example_ids += batch_data['example_id']
         all_offset_mapping += batch_data['offset_mapping']
     example_to_features = defaultdict(list)
     for idx, feature_id in enumerate(all_example_ids):
@@ -132,8 +131,11 @@ def test(model, dataloader, dataset):
     model.eval()
 
     for batch in test_pbar:
-        batch.pop('example_ids')
+        if not isinstance(batch, dict):
+            batch = batch[1]
+        batch.pop('example_id')
         batch.pop('offset_mapping')
+        batch.pop('overflow_to_sample_mapping')
         outputs = model(**batch)
         start_logits = outputs.start_logits
         end_logits = outputs.end_logits
@@ -153,8 +155,8 @@ def test(model, dataloader, dataset):
     assert max_len == args.max_length
 
     # concatenate the numpy array
-    start_logits_concat = create_and_fill_np_array(all_start_logits, dataset.eval_dataset['preprocessed'], max_len)
-    end_logits_concat = create_and_fill_np_array(all_end_logits, dataset.eval_dataset['preprocessed'], max_len)
+    start_logits_concat = create_and_fill_np_array(all_start_logits, dataset.test_dataset['preprocessed'], max_len)
+    end_logits_concat = create_and_fill_np_array(all_end_logits, dataset.test_dataset['preprocessed'], max_len)
 
     # delete the list of numpy arrays
     del all_start_logits
@@ -169,10 +171,10 @@ def test(model, dataloader, dataset):
 def parse_args():
     parser = argparse.ArgumentParser(description="Finetune a transformers model on a Question Answering task")
     parser.add_argument(
-        "--test_path", type=str, default=None, help="A csv or a json file containing the training data.",required=True
+        "--test_path", type=str, default="./ckpt/relevant.json", help="A csv or a json file containing the training data.",required=False
     )
     parser.add_argument(
-        "--context_path", type=str, default=None, help="A csv or a json file containing the context data.", required=True
+        "--context_path", type=str, default="./data/context.json", help="A csv or a json file containing the context data.", required=False
     )
     parser.add_argument(
         "--max_length",
@@ -186,6 +188,7 @@ def parse_args():
     parser.add_argument(
         "--pad_to_max_length",
         action="store_true",
+        # default=True,
         help="If passed, pad all samples to `max_seq_length`. Otherwise, dynamic padding is used.",
     )
     parser.add_argument(
@@ -207,11 +210,11 @@ def parse_args():
         help="Batch size (per device) for the testing dataloader.",
     )
     parser.add_argument("--ckpt_dir", type=Path, default="./ckpt", help="Where to store the final model.")
-    parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
+    parser.add_argument("--seed", type=int, default=12356, help="A seed for reproducible training.")
     parser.add_argument(
         "--doc_stride",
         type=int,
-        default=128,
+        default=32,
         help="When splitting up a long document into chunks how much stride to take between chunks.",
     )
     parser.add_argument(

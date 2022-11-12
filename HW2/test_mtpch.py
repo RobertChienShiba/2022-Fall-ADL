@@ -44,9 +44,8 @@ from transformers import (
     BertForMultipleChoice,
     BertTokenizerFast,
 )
-from transformers.utils import PaddingStrategy
 
-from HFdataset_format import MultipleChoiceDataset, DataCollatorForMultipleChoice
+from datasets import MultipleChoiceDataset, DataCollatorForMultipleChoice
 
 logger = get_logger(__name__)
 # You should update this to your particular problem to have better documentation of `model_type`
@@ -54,72 +53,68 @@ MODEL_CONFIG_CLASSES = list(MODEL_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
 
 def main(args):
-    global accelerator
-    accelerator = Accelerator()
+  global accelerator
+  accelerator = Accelerator()
 
-    # Make one log on every process with the configuration for debugging.
-    logging.basicConfig(
-        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-        datefmt="%m/%d/%Y %H:%M:%S",
-        level=logging.INFO,
-    )
-    logger.setLevel(logging.INFO)
-    logger.info(accelerator.state, main_process_only=False)
-    if accelerator.is_local_main_process:
-        datasets.utils.logging.set_verbosity_warning()
-        transformers.utils.logging.set_verbosity_info()
-    else:
-        datasets.utils.logging.set_verbosity_error()
-        transformers.utils.logging.set_verbosity_error()
+  # Make one log on every process with the configuration for debugging.
+  logging.basicConfig(
+      format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+      datefmt="%m/%d/%Y %H:%M:%S",
+      level=logging.INFO,
+  )
+  logger.setLevel(logging.INFO)
+  logger.info(accelerator.state, main_process_only=False)
+  if accelerator.is_local_main_process:
+      datasets.utils.logging.set_verbosity_warning()
+      transformers.utils.logging.set_verbosity_info()
+  else:
+      datasets.utils.logging.set_verbosity_error()
+      transformers.utils.logging.set_verbosity_error()
 
-    # If passed along, set the training seed now.
-    if args.seed is not None:
-        set_seed(args.seed)
+  # If passed along, set the training seed now.
+  if args.seed is not None:
+      set_seed(args.seed)
 
-    config = AutoConfig.from_pretrained(args.model_dir)
-    tokenizer = BertTokenizerFast.from_pretrained(args.model_dir, use_fast=True)
-    model = BertForMultipleChoice.from_pretrained(
-        args.model_dir,
-        config=config,
-    )
+  config = AutoConfig.from_pretrained(args.model_dir)
+  tokenizer = BertTokenizerFast.from_pretrained(args.model_dir, use_fast=True)
+  model = BertForMultipleChoice.from_pretrained(
+      args.model_dir,
+      config=config,
+  )
 
-    model.resize_token_embeddings(len(tokenizer))
+  model.resize_token_embeddings(len(tokenizer))
 
-    # Preprocessing the datasets.
-    dataset = MultipleChoiceDataset(args.context_path, args.pad_to_max_length, args.max_length, tokenizer, False,
-            test_path=args.test_path, testHF_path='./data/test_mtpch.json')
+  # Preprocessing the datasets.
+  dataset = MultipleChoiceDataset(args.context_path, args.pad_to_max_length, args.max_length, tokenizer, False,
+          test_path=args.test_path, testHF_path='./data/test_mtpch.json')
 
-    # Log a few random samples from the training set:
-    # for index in random.sample(range(len(dataset.train_dataset)), 3):
-    #     logger.info(f"Sample {index} of the training set: {dataset.train_dataset[index]}.")
-    
-    # DataLoaders creation:
+  
+  # DataLoaders creation:
+  test_dataloader = DataLoader(
+      dataset.test_dataset, shuffle=False, batch_size=args.per_device_test_batch_size,
+      collate_fn=DataCollatorForMultipleChoice(is_train=False, tokenizer=tokenizer)
+  )
 
-    test_dataloader = DataLoader(
-        dataset.test_dataset.select(range(100)), shuffle=False, batch_size=args.per_device_test_batch_size,
-        collate_fn=DataCollatorForMultipleChoice(is_train=False, tokenizer=tokenizer)
-    )
+  # Use the device given by the `accelerator` object.
+  device = accelerator.device
+  model.to(device)
 
-    # Use the device given by the `accelerator` object.
-    device = accelerator.device
-    model.to(device)
+  # Prepare everything with our `accelerator`.
+  model, test_dataloader= accelerator.prepare(model, test_dataloader)
 
-    # Prepare everything with our `accelerator`.
-    model, test_dataloader= accelerator.prepare(model, test_dataloader)
+  logger.info("***** Running testing *****")
+  logger.info(f"  Num examples = {len(dataset.test_dataset)}")
+  logger.info(f"  Instantaneous batch size per device = {args.per_device_test_batch_size}")
 
-    logger.info("***** Running testing *****")
-    logger.info(f"  Num examples = {len(dataset.test_dataset)}")
-    logger.info(f"  Instantaneous batch size per device = {args.per_device_test_batch_size}")
+  pred_dict = test(model, test_dataloader)
 
-    pred_dict = test(model, test_dataloader)
-
-    with open(args.test_path, 'r', encoding='utf-8') as file:
-        test_file = json.load(file)
-    with open(args.ckpt_dir / 'relevant.json', 'w', encoding='utf-8') as file:
-        for data in test_file:
-            if data['id'] in pred_dict:
-                data['relevant'] = pred_dict[data['id']]
-        json.dump(test_file, file, indent=4, ensure_ascii=False)
+  with open(args.test_path, 'r', encoding='utf-8') as file:
+    test_file = json.load(file)
+  with open(args.test_path, 'w', encoding='utf-8') as file:
+    for data in test_file:
+      if data['id'] in pred_dict:
+        data['relevant'] = data["paragraphs"][int(pred_dict[data['id']])]
+    json.dump(test_file, file, indent=4, ensure_ascii=False)
 
 @torch.no_grad()
 def test(model, dataloader):
@@ -161,24 +156,22 @@ def parse_args():
     parser.add_argument(
         "--pad_to_max_length",
         action="store_true",
-        # default=True,
         help="If passed, pad all samples to `max_length`. Otherwise, dynamic padding is used.",
     )
     parser.add_argument(
         "--model_dir",
         type=str,
-        default="./model/mengzi-bert-base",
         help="Path to pretrained model or model identifier from huggingface.co/models.",
         required=True,
     )
     parser.add_argument(
         "--per_device_test_batch_size",
         type=int,
-        default=2,
+        default=8,
         help="Batch size (per device) for the testing dataloader.",
     )
     parser.add_argument("--ckpt_dir", type=Path, default="./ckpt", help="Where to store the final model.")
-    parser.add_argument("--seed", type=int, default=1234, help="A seed for reproducible training.")
+    parser.add_argument("--seed", type=int, default=12345, help="A seed for reproducible training.")
 
     args = parser.parse_args()
 
