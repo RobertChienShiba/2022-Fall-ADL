@@ -323,6 +323,9 @@ class QADataset(BaseDataset):
         with open(context_path, 'r', encoding='utf-8') as file:
             context = json.load(file)
 
+        with open('relevant.json', 'r', encoding='utf-8') as file:
+            relevant = json.load(file)
+
         df = pd.read_json(ori_json, orient='records')
 
         if 'answer' in df.columns:
@@ -332,6 +335,7 @@ class QADataset(BaseDataset):
             df[['id', 'question', 'context', 'answers']].to_json(HF_json, 
                 orient='records', indent=4, force_ascii=False)
         else:
+            df['relevant'] = df['id'].map(relevant)
             df['context'] = df['relevant'].apply(
                 lambda s, context: context[int(s)] , args=(context,))
             df[['id', 'question', 'context']].to_json(HF_json, 

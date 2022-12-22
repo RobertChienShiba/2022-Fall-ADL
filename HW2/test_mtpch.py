@@ -110,11 +110,11 @@ def main(args):
 
   with open(args.test_path, 'r', encoding='utf-8') as file:
     test_file = json.load(file)
-  with open(args.test_path, 'w', encoding='utf-8') as file:
+  with open('relevant.json', 'w', encoding='utf-8') as file:
     for data in test_file:
       if data['id'] in pred_dict:
-        data['relevant'] = data["paragraphs"][int(pred_dict[data['id']])]
-    json.dump(test_file, file, indent=4, ensure_ascii=False)
+        pred_dict[data['id']] = data["paragraphs"][int(pred_dict[data['id']])]
+    json.dump(pred_dict, file, indent=2, ensure_ascii=False)
 
 @torch.no_grad()
 def test(model, dataloader):
