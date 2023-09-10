@@ -31,6 +31,7 @@ from transformers import (
 
 from dataset import SummarizationDataset
 from utils import postprocess_text, save_curve_plot, rl_loss
+from rl_loss import RLTrainer
 
 logger = get_logger(__name__)
 # You should update this to your particular problem to have better documentation of `model_type`
@@ -380,59 +381,62 @@ def train(model, optimizer, dataloader, lr_scheduler, tokenizer):
                 loss = outputs.loss
             else:
                 # Loss & reward function for RL
-                greedy_tokens = accelerator.unwrap_model(model).generate(
-                    batch["input_ids"],
-                    attention_mask=batch["attention_mask"],
-                    do_sample=True,
-                    max_length=args.max_target_length,
-                )
-                greedy_tokens = accelerator.pad_across_processes(
-                    greedy_tokens, dim=1, pad_index=tokenizer.pad_token_id
-                )
-                greedy_tokens = accelerator.gather(greedy_tokens)
-                greedy_tokens = greedy_tokens.cpu().numpy()
-                if isinstance(greedy_tokens, tuple):
-                    greedy_tokens = greedy_tokens[0]
-                greedy_outputs = tokenizer.batch_decode(greedy_tokens, skip_special_tokens=True)
-                greedy_labels = batch['labels'].cpu().numpy()
-                # Replace -100 in the labels as we can't decode them.
-                greedy_labels = np.where(greedy_labels != -100, greedy_labels, tokenizer.pad_token_id)
-                greedy_labels = tokenizer.batch_decode(greedy_labels, skip_special_tokens=True)
+                # greedy_tokens = accelerator.unwrap_model(model).generate(
+                #     batch["input_ids"],
+                #     attention_mask=batch["attention_mask"],
+                #     do_sample=True,
+                #     max_length=args.max_target_length,
+                # )
+                # greedy_tokens = accelerator.pad_across_processes(
+                #     greedy_tokens, dim=1, pad_index=tokenizer.pad_token_id
+                # )
+                # greedy_tokens = accelerator.gather(greedy_tokens)
+                # greedy_tokens = greedy_tokens.cpu().numpy()
+                # if isinstance(greedy_tokens, tuple):
+                #     greedy_tokens = greedy_tokens[0]
+                # greedy_outputs = tokenizer.batch_decode(greedy_tokens, skip_special_tokens=True)
+                # greedy_labels = batch['labels'].cpu().numpy()
+                # # Replace -100 in the labels as we can't decode them.
+                # greedy_labels = np.where(greedy_labels != -100, greedy_labels, tokenizer.pad_token_id)
+                # greedy_labels = tokenizer.batch_decode(greedy_labels, skip_special_tokens=True)
 
-                sample_tokens = accelerator.unwrap_model(model).generate(
-                    batch["input_ids"],
-                    attention_mask=batch["attention_mask"],
-                    max_length=args.max_target_length,
-                    do_sample=args.do_sample,
-                    top_k=args.top_k,
-                    top_p=args.top_p,
-                    temperature=args.temperature
-                )
-                sample_tokens = accelerator.pad_across_processes(
-                    sample_tokens, dim=1, pad_index=tokenizer.pad_token_id
-                )
-                sample_tokens = accelerator.gather(sample_tokens)
-                sample_tokens = sample_tokens.cpu().numpy()
-                if isinstance(sample_tokens, tuple):
-                    sample_tokens = sample_tokens[0]
-                sample_outputs = tokenizer.batch_decode(sample_tokens, skip_special_tokens=True)
-                sample_labels = batch['labels'].cpu().numpy()
-                # Replace -100 in the labels as we can't decode them.
-                sample_labels = np.where(sample_labels != -100, sample_labels, tokenizer.pad_token_id)
-                sample_labels = tokenizer.batch_decode(sample_labels, skip_special_tokens=True)
+                # sample_tokens = accelerator.unwrap_model(model).generate(
+                #     batch["input_ids"],
+                #     attention_mask=batch["attention_mask"],
+                #     max_length=args.max_target_length,
+                #     do_sample=args.do_sample,
+                #     top_k=args.top_k,
+                #     top_p=args.top_p,
+                #     temperature=args.temperature
+                # )
+                # sample_tokens = accelerator.pad_across_processes(
+                #     sample_tokens, dim=1, pad_index=tokenizer.pad_token_id
+                # )
+                # sample_tokens = accelerator.gather(sample_tokens)
+                # sample_tokens = sample_tokens.cpu().numpy()
+                # if isinstance(sample_tokens, tuple):
+                #     sample_tokens = sample_tokens[0]
+                # sample_outputs = tokenizer.batch_decode(sample_tokens, skip_special_tokens=True)
+                # sample_labels = batch['labels'].cpu().numpy()
+                # # Replace -100 in the labels as we can't decode them.
+                # sample_labels = np.where(sample_labels != -100, sample_labels, tokenizer.pad_token_id)
+                # sample_labels = tokenizer.batch_decode(sample_labels, skip_special_tokens=True)
 
-                try:
-                    greedy_rouges = postprocess_text(greedy_outputs, greedy_labels, avg=False)
-                    sample_rouges = postprocess_text(sample_outputs, sample_labels, avg=False)
-                except:
-                    logger.warning('Model Predict Empty Summary !!!')
-                    continue
-                greedy_rewards = list(map(lambda x: sum([x["rouge-1"]['f'], x["rouge-2"]['f'], x["rouge-l"]['f']]) / 3, greedy_rouges))
-                sample_rewards = list(map(lambda x: sum([x["rouge-1"]['f'], x["rouge-2"]['f'], x["rouge-l"]['f']]) / 3, sample_rouges))
+                # try:
+                #     greedy_rouges = postprocess_text(greedy_outputs, greedy_labels, avg=False)
+                #     sample_rouges = postprocess_text(sample_outputs, sample_labels, avg=False)
+                # except:
+                #     logger.warning('Model Predict Empty Summary !!!')
+                #     continue
+                # greedy_rewards = list(map(lambda x: sum([x["rouge-1"]['f'], x["rouge-2"]['f'], x["rouge-l"]['f']]) / 3, greedy_rouges))
+                # sample_rewards = list(map(lambda x: sum([x["rouge-1"]['f'], x["rouge-2"]['f'], x["rouge-l"]['f']]) / 3, sample_rouges))
 
-                loss_input = outputs.logits[:, :sample_tokens.shape[1], :].reshape(-1, outputs.logits.shape[-1])
-                loss_target = torch.tensor(sample_tokens.reshape(-1)).cuda()
-                loss = rl_loss(loss_input, loss_target, greedy_rewards, sample_rewards)
+                # loss_input = outputs.logits[:, :sample_tokens.shape[1], :].reshape(-1, outputs.logits.shape[-1])
+                # loss_target = torch.tensor(sample_tokens.reshape(-1)).cuda()
+                # loss = rl_loss(loss_input, loss_target, greedy_rewards, sample_rewards)
+
+                rl_trainer = RLTrainer(tokenizer, args)
+                loss = rl_trainer.compute_loss(outputs, batch)
 
             total_loss += loss.detach().item()
             step += 1

@@ -1,0 +1,11 @@
+lightgbm
+numpy
+pandas
+transformers
+beautifulsoup4
+tqdm
+text2vec
+scikit-learn
+scipy
+zhconv
+torch
